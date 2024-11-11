@@ -14,8 +14,8 @@ typedef struct
 
 typedef struct
 {
-	GLfloat v[3];
-	GLfloat vn[3];
+	GLint v[3];
+	GLint vn[3];
 } Face;
 
 typedef struct
@@ -96,21 +96,21 @@ void allocateMemory(Group* groups, GLint groupCount)
 {
 	for (int i = 0; i < groupCount; i++)
 	{
-		groups[i].vertices = (Vertex3*)malloc(sizeof(Vertex3) * (groups[i].vertexCount + 1));
+		groups[i].vertices = (Vertex3*)malloc(sizeof(Vertex3) * (groups[i].vertexCount));
 		if (!groups[i].vertices)
 		{
 			printf("Error allocating memory for the vertices at index: %d\n", i);
 			exit(1);
 		}
 
-		groups[i].normals = (Vertex3*)malloc(sizeof(Vertex3) * (groups[i].normalCount + 1));
+		groups[i].normals = (Vertex3*)malloc(sizeof(Vertex3) * (groups[i].normalCount));
 		if (!groups[i].normals)
 		{
 			printf("Error allocating memory for the normals at index: %d\n", i);
 			exit(1);
 		}
 
-		groups[i].faces = (Face*)malloc(sizeof(Face) * (groups[i].faceCount + 1));
+		groups[i].faces = (Face*)malloc(sizeof(Face) * (groups[i].faceCount));
 		if (!groups[i].faces)
 		{
 			printf("Error allocating memory for the faces at index: %d\n", i);
@@ -170,18 +170,90 @@ void setValues(FILE* file, Group* groups, GLint groupCount)
 				&groups[currentGroup].faces[faceCounter].v[2],
 				&groups[currentGroup].faces[faceCounter].vn[2]) == 6)
 			{
+
+				groups[currentGroup].faces[faceCounter].v[0] -= 1;
+				groups[currentGroup].faces[faceCounter].vn[0] -= 1;
+				groups[currentGroup].faces[faceCounter].v[1] -= 1;
+				groups[currentGroup].faces[faceCounter].vn[1] -= 1;
+				groups[currentGroup].faces[faceCounter].v[2] -= 1;
+				groups[currentGroup].faces[faceCounter].vn[2] -= 1;
 				faceCounter++;
-				printf("Group: %d, Face: %d\n", currentGroup, faceCounter);
+				//printf("Group: %d, Face: %d\n", currentGroup, faceCounter);
+				for (int i = 0; i < 3; i++)
+				{
+					printf("Group: %d, Face: %d, V: %d, VN: %d\n", currentGroup, faceCounter, groups[currentGroup].faces[faceCounter -1].v[i], groups[currentGroup].faces[faceCounter -1].v[i]);
+				}
 			}
 		}
 	}
 }
 
+// Helper method to count, allocate, and set the values for the object to be
+// rendered.
 void allocateAndPopulateHelper(FILE* file, Group* groups, GLint* groupCount)
 {
 	countElements(file, groups, groupCount);
 	allocateMemory(groups, *groupCount);
 	setValues(file, groups, *groupCount);
+
+	/*printf("This is the groupCount: %d\n", *groupCount);
+
+	for (int i = 0; i < *groupCount; i++)
+	{
+		printf("There are %d faces in this group\n", groups[i].faceCount);
+	}*/
+}
+
+void renderObject(Group* group)
+{
+	glBegin(GL_TRIANGLES);
+	//printf("There are %d faces in this loop iteration\n", group->faceCount);
+	for (GLint i = 0; i < group->faceCount; i++)
+	{
+		Face* currentFace = &group->faces[i];
+
+		GLfloat color = (GLfloat) i / group->faceCount;
+		glColor3f(color, color, 0.2f);
+		for (GLint j = 0; j < 3; j++)
+		{
+			GLint vertexIndex = currentFace->v[j];
+			GLint normalIndex = currentFace->vn[j];
+
+			//printf("Vertex index: %d, Normal Index: %d\n", vertexIndex, normalIndex);
+
+			Vertex3* vertex = &group->vertices[vertexIndex];
+			Vertex3* normal = &group->normals[normalIndex];
+
+			//printf("Vertex %d: (%f, %f, %f)\n", vertexIndex, vertex->position[0], vertex->position[1], vertex->position[2]);
+
+			glNormal3f(normal->position[0], normal->position[1], normal->position[2]);
+			glVertex3f(vertex->position[0], vertex->position[1], vertex->position[2]);
+		}
+	}
+
+	glEnd();
+}
+
+void drawSubmarine()
+{
+	glPushMatrix();
+
+	// Increase the size by 10x
+	glScalef(2.0f, 2.0f, 2.0f);
+
+	// Move to the look at position
+	glTranslatef(30, -30, 0);
+
+	// Set submarineColor to yellow
+	glColor3f(1.0f, 1.0f, 0.0f);
+
+	// Call the draw helper
+	for (GLint i = 0; i < submarineGroupCount; i++)
+	{
+		renderObject(&submarine[i]);
+	}
+	
+	glPopMatrix();
 }
 
 /*
@@ -260,7 +332,9 @@ void display(void)
 		cameraLookAt[0], cameraLookAt[1], cameraLookAt[2],
 		0, 1, 0);
 
-	drawUnitVectors();
+	drawSubmarine();
+
+	//drawUnitVectors();
 
 	glutSwapBuffers();
 }
