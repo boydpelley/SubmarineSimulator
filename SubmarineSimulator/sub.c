@@ -1,4 +1,6 @@
 #include <freeglut.h>
+#include <stdio.h>
+#include <stdlib.h>
 
 typedef struct
 {
@@ -9,6 +11,22 @@ typedef struct
 {
 	GLfloat rgb[3];
 } Color;
+
+typedef struct
+{
+	GLfloat v[3];
+	GLfloat vn[3];
+} Face;
+
+typedef struct
+{
+	Vertex3* vertices;
+	Vertex3* normals;
+	Face* faces;
+	int vertexCount;
+	int normalCount;
+	int faceCount;
+} Group;
 
 // Beginning camera position
 GLfloat cameraPosition[] = { 0, -200, 20 };
@@ -27,6 +45,144 @@ GLfloat cameraStepSize = 0.5f;
 GLboolean isFullscreen = GL_FALSE;
 GLboolean isDrawingWireFrame = GL_FALSE;
 
+// Submarine varaibles
+Group submarine[4];
+GLint* submarineGroupCount = 0;
+
+// Method that reads through a file, counting the pieces of a certain object, 
+// whether it's coral or the submarine pieces. It increases a groupCount
+// variable that gets passed into the function for use in other methods
+void countElements(FILE* file, Group* groups, int* groupCount)
+{
+	char line[128];
+	int currentGroup = -1;
+
+	while (fgets(line, sizeof(line), file) != NULL)
+	{
+		// If the line starts with g, then we have a sub piece
+		if (line[0] == 'g')
+		{
+			currentGroup++;
+			groups[currentGroup].vertexCount = 0;
+			groups[currentGroup].normalCount = 0;
+			groups[currentGroup].faceCount = 0;
+			
+			(*groupCount)++;
+		}
+		// If we are on a vertex line
+		else if (line[0] == 'v' && line[1] != 'n')
+		{
+			groups[currentGroup].vertexCount++;
+		}
+		// If we are on a normal line
+		else if (line[0] == 'v' && line[1] == 'n')
+		{
+			groups[currentGroup].normalCount++;
+		}
+		// If we are on a face line
+		else if (line[0] == 'f')
+		{
+			groups[currentGroup].faceCount++;
+		}
+	}
+
+	// Go back to the start of the file after we increase the counts
+	rewind(file);
+}
+
+// Function to allocate memory for all of the groups of a specific object to be
+// rendered.
+void allocateMemory(Group* groups, GLint groupCount)
+{
+	for (int i = 0; i < groupCount; i++)
+	{
+		groups[i].vertices = (Vertex3*)malloc(sizeof(Vertex3) * (groups[i].vertexCount + 1));
+		if (!groups[i].vertices)
+		{
+			printf("Error allocating memory for the vertices at index: %d\n", i);
+			exit(1);
+		}
+
+		groups[i].normals = (Vertex3*)malloc(sizeof(Vertex3) * (groups[i].normalCount + 1));
+		if (!groups[i].normals)
+		{
+			printf("Error allocating memory for the normals at index: %d\n", i);
+			exit(1);
+		}
+
+		groups[i].faces = (Face*)malloc(sizeof(Face) * (groups[i].faceCount + 1));
+		if (!groups[i].faces)
+		{
+			printf("Error allocating memory for the faces at index: %d\n", i);
+			exit(1);
+		}
+	}
+}
+
+/*
+* Method used to read through a file, and set the values for the vertices, 
+* normals, and faces for all of the groups of an object
+*/
+void setValues(FILE* file, Group* groups, GLint groupCount)
+{
+	int vertexCounter = 0, normalCounter = 0, faceCounter = 0;
+
+	int currentGroup = -1;
+
+	char line[128];
+
+	while (fgets(line, sizeof(line), file) != NULL)
+	{
+		if (line[0] == 'g')
+		{
+			currentGroup++;
+			vertexCounter = 0, normalCounter = 0; faceCounter = 0;
+		}
+		else if (line[0] == 'v' && line[1] != 'n')
+		{
+			if (sscanf_s(line, "v %f %f %f",
+				&groups[currentGroup].vertices[vertexCounter].position[0],
+				&groups[currentGroup].vertices[vertexCounter].position[1],
+				&groups[currentGroup].vertices[vertexCounter].position[2]) == 3)
+			{
+				vertexCounter++;
+				printf("Group: %d, Vertex: %d\n", currentGroup, vertexCounter);
+			}
+		}
+		else if (line[0] == 'v' && line[1] == 'n')
+		{
+			if (sscanf_s(line, "vn %f %f %f",
+				&groups[currentGroup].normals[normalCounter].position[0],
+				&groups[currentGroup].normals[normalCounter].position[1],
+				&groups[currentGroup].normals[normalCounter].position[2]) == 3)
+			{
+				normalCounter++;
+				printf("Group: %d, Normal: %d\n", currentGroup, normalCounter);
+			}
+		}
+		else if (line[0] == 'f')
+		{
+			if (sscanf_s(line, "f %d//%d %d//%d %d//%d",
+				&groups[currentGroup].faces[faceCounter].v[0],
+				&groups[currentGroup].faces[faceCounter].vn[0],
+				&groups[currentGroup].faces[faceCounter].v[1],
+				&groups[currentGroup].faces[faceCounter].vn[1],
+				&groups[currentGroup].faces[faceCounter].v[2],
+				&groups[currentGroup].faces[faceCounter].vn[2]) == 6)
+			{
+				faceCounter++;
+				printf("Group: %d, Face: %d\n", currentGroup, faceCounter);
+			}
+		}
+	}
+}
+
+void allocateAndPopulateHelper(FILE* file, Group* groups, GLint* groupCount)
+{
+	countElements(file, groups, groupCount);
+	allocateMemory(groups, *groupCount);
+	setValues(file, groups, *groupCount);
+}
 
 /*
 * Method used to draw the unit vectors coming out of the origin. It uses for 
@@ -90,6 +246,15 @@ void display(void)
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
 	glLoadIdentity();
+
+	if (isDrawingWireFrame)
+	{
+		glPolygonMode(GL_FRONT_AND_BACK, GL_LINES);
+	}
+	else
+	{
+		glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+	}
 
 	gluLookAt(cameraPosition[0], cameraPosition[1], cameraPosition[2],
 		cameraLookAt[0], cameraLookAt[1], cameraLookAt[2],
@@ -160,6 +325,7 @@ void handleKeyboard(unsigned char key, GLint x, GLint y)
 	if (key == 'u' || key == 'U')
 	{
 		isDrawingWireFrame = !isDrawingWireFrame;
+		glutPostRedisplay();
 	}
 
 	if (key == 'q' || key == 'Q')
@@ -188,9 +354,37 @@ void initializeGL(void)
 	glMatrixMode(GL_MODELVIEW);
 }
 
+// Helper method to clean up the main method and leave the initialization of 
+// the submarine in its own method
+void initSub()
+{
+	FILE* file = fopen("submarine - updated.obj", "r");
+	if (!file)
+	{
+		printf("No file found\n");
+		return 1;
+	}
+
+	allocateAndPopulateHelper(file, submarine, &submarineGroupCount);
+	fclose(file);
+}
+
+// Method to free the memory of all of the objects we allocated memory for
+void freeObjects()
+{
+	for (GLint i = 0; i < submarineGroupCount; i++)
+	{
+		free(submarine[i].vertices);
+		free(submarine[i].normals);
+		free(submarine[i].faces);
+	}
+}
+
 // The main method that ties everything together
 int main(int argc, char** argv)
 {
+	initSub();
+
 	glutInit(&argc, argv);
 
 	glutInitDisplayMode(GLUT_RGB | GLUT_DEPTH | GLUT_DOUBLE);
@@ -207,4 +401,6 @@ int main(int argc, char** argv)
 
 	initializeGL();
 	glutMainLoop();
+
+	freeObjects();
 }
