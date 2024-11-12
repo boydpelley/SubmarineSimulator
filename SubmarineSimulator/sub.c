@@ -46,43 +46,31 @@ GLboolean isFullscreen = GL_FALSE;
 GLboolean isDrawingWireFrame = GL_FALSE;
 
 // Submarine varaibles
-Group submarine[4];
-GLint* submarineGroupCount = 0;
+Group submarine;
 
 // Method that reads through a file, counting the pieces of a certain object, 
-// whether it's coral or the submarine pieces. It increases a groupCount
-// variable that gets passed into the function for use in other methods
-void countElements(FILE* file, Group* groups, int* groupCount)
+// whether it's coral or the submarine pieces. Based on the grouping, I had 
+// no need to care for the groups
+void countElements(FILE* file, Group* group)
 {
 	char line[128];
-	int currentGroup = -1;
 
 	while (fgets(line, sizeof(line), file) != NULL)
 	{
-		// If the line starts with g, then we have a sub piece
-		if (line[0] == 'g')
-		{
-			currentGroup++;
-			groups[currentGroup].vertexCount = 0;
-			groups[currentGroup].normalCount = 0;
-			groups[currentGroup].faceCount = 0;
-			
-			(*groupCount)++;
-		}
 		// If we are on a vertex line
-		else if (line[0] == 'v' && line[1] != 'n')
+		if (line[0] == 'v' && line[1] != 'n')
 		{
-			groups[currentGroup].vertexCount++;
+			group->vertexCount++;
 		}
 		// If we are on a normal line
 		else if (line[0] == 'v' && line[1] == 'n')
 		{
-			groups[currentGroup].normalCount++;
+			group->normalCount++;
 		}
 		// If we are on a face line
 		else if (line[0] == 'f')
 		{
-			groups[currentGroup].faceCount++;
+			group->faceCount++;
 		}
 	}
 
@@ -92,96 +80,86 @@ void countElements(FILE* file, Group* groups, int* groupCount)
 
 // Function to allocate memory for all of the groups of a specific object to be
 // rendered.
-void allocateMemory(Group* groups, GLint groupCount)
+void allocateMemory(Group* group)
 {
-	for (int i = 0; i < groupCount; i++)
-	{
-		groups[i].vertices = (Vertex3*)malloc(sizeof(Vertex3) * (groups[i].vertexCount));
-		if (!groups[i].vertices)
+		group->vertices = (Vertex3*)malloc(sizeof(Vertex3) * (group->vertexCount));
+		if (!group->vertices)
 		{
-			printf("Error allocating memory for the vertices at index: %d\n", i);
+			printf("Error allocating memory for the vertices\n");
 			exit(1);
 		}
 
-		groups[i].normals = (Vertex3*)malloc(sizeof(Vertex3) * (groups[i].normalCount));
-		if (!groups[i].normals)
+		group->normals = (Vertex3*)malloc(sizeof(Vertex3) * (group->normalCount));
+		if (!group->normals)
 		{
-			printf("Error allocating memory for the normals at index: %d\n", i);
+			printf("Error allocating memory for the normals\n");
 			exit(1);
 		}
 
-		groups[i].faces = (Face*)malloc(sizeof(Face) * (groups[i].faceCount));
-		if (!groups[i].faces)
+		group->faces = (Face*)malloc(sizeof(Face) * (group->faceCount));
+		if (!group->faces)
 		{
-			printf("Error allocating memory for the faces at index: %d\n", i);
+			printf("Error allocating memory for the faces\n");
 			exit(1);
 		}
-	}
 }
 
 /*
 * Method used to read through a file, and set the values for the vertices, 
 * normals, and faces for all of the groups of an object
 */
-void setValues(FILE* file, Group* groups, GLint groupCount)
+void setValues(FILE* file, Group* group)
 {
 	int vertexCounter = 0, normalCounter = 0, faceCounter = 0;
-
-	int currentGroup = -1;
 
 	char line[128];
 
 	while (fgets(line, sizeof(line), file) != NULL)
 	{
-		if (line[0] == 'g')
-		{
-			currentGroup++;
-			vertexCounter = 0, normalCounter = 0; faceCounter = 0;
-		}
-		else if (line[0] == 'v' && line[1] != 'n')
+		if (line[0] == 'v' && line[1] != 'n')
 		{
 			if (sscanf_s(line, "v %f %f %f",
-				&groups[currentGroup].vertices[vertexCounter].position[0],
-				&groups[currentGroup].vertices[vertexCounter].position[1],
-				&groups[currentGroup].vertices[vertexCounter].position[2]) == 3)
+				&group->vertices[vertexCounter].position[0],
+				&group->vertices[vertexCounter].position[1],
+				&group->vertices[vertexCounter].position[2]) == 3)
 			{
 				vertexCounter++;
-				printf("Group: %d, Vertex: %d\n", currentGroup, vertexCounter);
+				printf("Vertex: %d\n", vertexCounter);
 			}
 		}
 		else if (line[0] == 'v' && line[1] == 'n')
 		{
 			if (sscanf_s(line, "vn %f %f %f",
-				&groups[currentGroup].normals[normalCounter].position[0],
-				&groups[currentGroup].normals[normalCounter].position[1],
-				&groups[currentGroup].normals[normalCounter].position[2]) == 3)
+				&group->normals[normalCounter].position[0],
+				&group->normals[normalCounter].position[1],
+				&group->normals[normalCounter].position[2]) == 3)
 			{
 				normalCounter++;
-				printf("Group: %d, Normal: %d\n", currentGroup, normalCounter);
+				printf("Normal: %d\n", normalCounter);
 			}
 		}
 		else if (line[0] == 'f')
 		{
 			if (sscanf_s(line, "f %d//%d %d//%d %d//%d",
-				&groups[currentGroup].faces[faceCounter].v[0],
-				&groups[currentGroup].faces[faceCounter].vn[0],
-				&groups[currentGroup].faces[faceCounter].v[1],
-				&groups[currentGroup].faces[faceCounter].vn[1],
-				&groups[currentGroup].faces[faceCounter].v[2],
-				&groups[currentGroup].faces[faceCounter].vn[2]) == 6)
+				&group->faces[faceCounter].v[0],
+				&group->faces[faceCounter].vn[0],
+				&group->faces[faceCounter].v[1],
+				&group->faces[faceCounter].vn[1],
+				&group->faces[faceCounter].v[2],
+				&group->faces[faceCounter].vn[2]) == 6)
 			{
 
-				groups[currentGroup].faces[faceCounter].v[0] -= 1;
-				groups[currentGroup].faces[faceCounter].vn[0] -= 1;
-				groups[currentGroup].faces[faceCounter].v[1] -= 1;
-				groups[currentGroup].faces[faceCounter].vn[1] -= 1;
-				groups[currentGroup].faces[faceCounter].v[2] -= 1;
-				groups[currentGroup].faces[faceCounter].vn[2] -= 1;
+				group->faces[faceCounter].v[0] -= 1;
+				group->faces[faceCounter].vn[0] -= 1;
+				group->faces[faceCounter].v[1] -= 1;
+				group->faces[faceCounter].vn[1] -= 1;
+				group->faces[faceCounter].v[2] -= 1;
+				group->faces[faceCounter].vn[2] -= 1;
 				faceCounter++;
 				//printf("Group: %d, Face: %d\n", currentGroup, faceCounter);
 				for (int i = 0; i < 3; i++)
 				{
-					printf("Group: %d, Face: %d, V: %d, VN: %d\n", currentGroup, faceCounter, groups[currentGroup].faces[faceCounter -1].v[i], groups[currentGroup].faces[faceCounter -1].v[i]);
+					printf("Face: %d, V: %d, VN: %d\n", faceCounter, group->faces[faceCounter -1].v[i], group->faces[faceCounter -1].v[i]);
 				}
 			}
 		}
@@ -190,11 +168,11 @@ void setValues(FILE* file, Group* groups, GLint groupCount)
 
 // Helper method to count, allocate, and set the values for the object to be
 // rendered.
-void allocateAndPopulateHelper(FILE* file, Group* groups, GLint* groupCount)
+void allocateAndPopulateHelper(FILE* file, Group* group)
 {
-	countElements(file, groups, groupCount);
-	allocateMemory(groups, *groupCount);
-	setValues(file, groups, *groupCount);
+	countElements(file, group);
+	allocateMemory(group);
+	setValues(file, group);
 
 	/*printf("This is the groupCount: %d\n", *groupCount);
 
@@ -248,10 +226,7 @@ void drawSubmarine()
 	glColor3f(1.0f, 1.0f, 0.0f);
 
 	// Call the draw helper
-	for (GLint i = 0; i < submarineGroupCount; i++)
-	{
-		renderObject(&submarine[i]);
-	}
+	renderObject(&submarine);
 	
 	glPopMatrix();
 }
@@ -439,19 +414,16 @@ void initSub()
 		return 1;
 	}
 
-	allocateAndPopulateHelper(file, submarine, &submarineGroupCount);
+	allocateAndPopulateHelper(file, &submarine);
 	fclose(file);
 }
 
 // Method to free the memory of all of the objects we allocated memory for
 void freeObjects()
 {
-	for (GLint i = 0; i < submarineGroupCount; i++)
-	{
-		free(submarine[i].vertices);
-		free(submarine[i].normals);
-		free(submarine[i].faces);
-	}
+	free(submarine.vertices);
+	free(submarine.normals);
+	free(submarine.faces);
 }
 
 // The main method that ties everything together
