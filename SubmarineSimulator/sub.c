@@ -33,8 +33,9 @@ typedef struct
 } Group;
 
 // Beginning camera position
-GLfloat cameraPosition[] = { 0, -200, 20 };
+GLfloat cameraPosition[] = { 0.0f, -200.0f, 0.0f };
 GLfloat cameraLookAt[] = { 0.0f, 0.0f, 0.0f };
+//GLfloat lookAtOffset[] = { 0.0f, 200.0f, 0.0f };
 
 // Window variables
 GLfloat windowWidth = 800;
@@ -239,15 +240,26 @@ void renderObject(ObjValues* values, Group* group)
 	glEnd();
 }
 
+GLfloat submarineX;
+GLfloat submarineY;
+GLfloat submarineZ;
+
 void drawSubmarine()
 {
 	glPushMatrix();
 
-	// Increase the size by 10x
-	glScalef(2.0f, 2.0f, 2.0f);
+	submarineX = cameraLookAt[0];
+	submarineY = cameraLookAt[1];
+	submarineZ = cameraLookAt[2];
 
 	// Move to the look at position
-	glTranslatef(30, -30, 0);
+	glTranslatef(submarineX, submarineY, submarineZ);
+
+	glRotatef(90.0f, 1, 0, 0);
+	glRotatef(-90.0f, 0, 1, 0);
+
+	// Increase the size by 0.5x
+	glScalef(0.5f, 0.5f, 0.5f);
 
 	// Set submarineColor to yellow
 	glColor3f(1.0f, 1.0f, 0.0f);
@@ -324,22 +336,15 @@ void display(void)
 
 	glLoadIdentity();
 
-	if (isDrawingWireFrame)
-	{
-		glPolygonMode(GL_FRONT_AND_BACK, GL_LINES);
-	}
-	else
-	{
-		glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-	}
+	glPolygonMode(GL_FRONT_AND_BACK, isDrawingWireFrame ? GL_LINE : GL_FILL);
 
 	gluLookAt(cameraPosition[0], cameraPosition[1], cameraPosition[2],
 		cameraLookAt[0], cameraLookAt[1], cameraLookAt[2],
-		0, 1, 0);
+		0, 0, 1);
 
 	drawSubmarine();
 
-	//drawUnitVectors();
+	drawUnitVectors();
 
 	glutSwapBuffers();
 }
@@ -357,7 +362,7 @@ void handleSpecialKeyboard(unsigned char key, GLint x, GLint y)
 	if (key == GLUT_KEY_DOWN)
 	{
 		cameraPosition[2] -= cameraStepSize;
-		cameraPosition[2] -= cameraStepSize;
+		cameraLookAt[2] -= cameraStepSize;
 	}
 }
 
@@ -369,6 +374,8 @@ void handleKeyboard(unsigned char key, GLint x, GLint y)
 	if (key == 'w' || key == 'W')
 	{
 		cameraPosition[1] += cameraStepSize;
+		/*printf("Current XYZ: ( %.2f, %.2f, %.2f ); LookAt XYZ: ( %.2f, %.2f, %.2f ); Submarinee XYZ: ( %.2f, %.2f, %.2f ) \n",
+			cameraPosition[0], cameraPosition[1], cameraPosition[2], cameraLookAt[0], cameraLookAt[1], cameraLookAt[2], submarineX, submarineY, submarineZ);*/
 		cameraLookAt[1] += cameraStepSize;
 	}
 	if (key == 'a' || key == 'A')
@@ -386,7 +393,6 @@ void handleKeyboard(unsigned char key, GLint x, GLint y)
 		cameraPosition[0] += cameraStepSize;
 		cameraLookAt[0] += cameraStepSize;
 	}
-
 	// Toggle the state variables
 	if (key == 'f' || key == 'F')
 	{
