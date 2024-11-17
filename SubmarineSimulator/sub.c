@@ -1,6 +1,9 @@
 #include <freeglut.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <math.h>
+
+#define PI 3.1415926535
 
 typedef struct
 {
@@ -35,7 +38,6 @@ typedef struct
 // Beginning camera position
 GLfloat cameraPosition[] = { 0.0f, -200.0f, 0.0f };
 GLfloat cameraLookAt[] = { 0.0f, 0.0f, 0.0f };
-//GLfloat lookAtOffset[] = { 0.0f, 200.0f, 0.0f };
 
 // Window variables
 GLfloat windowWidth = 800;
@@ -54,6 +56,17 @@ GLboolean isDrawingWireFrame = GL_FALSE;
 ObjValues submarineValues;
 Group submarine[4];
 GLint* submarineGroupCount = 0;
+GLfloat submarineX = 0.0f;
+GLfloat submarineY = 0.0f;
+GLfloat submarineZ = 0.0f;
+
+// Mouse Look Variables
+GLint prevX = 0;
+GLint prevY = 0;
+GLfloat cameraDistance = 200.0f;
+GLfloat horizontalMouseAngle = 0.0f;
+GLfloat verticalMouseAngle = 0.0f;
+GLfloat sensitivity = 0.5f;
 
 // Method that reads through a file, counting the pieces of a certain object, 
 // whether it's coral or the submarine pieces. It increases a groupCount
@@ -240,17 +253,9 @@ void renderObject(ObjValues* values, Group* group)
 	glEnd();
 }
 
-GLfloat submarineX;
-GLfloat submarineY;
-GLfloat submarineZ;
-
 void drawSubmarine()
 {
 	glPushMatrix();
-
-	submarineX = cameraLookAt[0];
-	submarineY = cameraLookAt[1];
-	submarineZ = cameraLookAt[2];
 
 	// Move to the look at position
 	glTranslatef(submarineX, submarineY, submarineZ);
@@ -323,6 +328,42 @@ void drawUnitVectors()
 	gluDeleteQuadric(quad);
 }
 
+void moveMouse(GLint x, GLint y)
+{
+	GLint xDiff = x - prevX;
+	GLint yDiff = y - prevY;
+
+	horizontalMouseAngle += xDiff * sensitivity;
+	verticalMouseAngle += yDiff * sensitivity;
+
+	// Reset angles to avoid ridiculoualy large (or negatively large) horizontal values
+	if (horizontalMouseAngle > 360.0f) horizontalMouseAngle -= 360.0f;
+	else if (horizontalMouseAngle < 0.0f) horizontalMouseAngle += 360.0f;
+
+	// Make sure that the vertical does not go above or below the top or the bottonm of the submarine
+	if (verticalMouseAngle > 89.0f) verticalMouseAngle = 89.0f;
+	else if (verticalMouseAngle < -89.0f) verticalMouseAngle = -89.0f;
+
+	prevX = x;
+	prevY = y;
+
+	glutPostRedisplay();
+}
+
+void moveCamera()
+{
+	GLfloat radianHorizontal = horizontalMouseAngle * (PI / 180.0f);
+	GLfloat radianVertical = verticalMouseAngle * (PI / 180.0f);
+
+	GLfloat newCamX = submarineX + cameraDistance * cosf(radianHorizontal) * cosf(radianVertical);
+	GLfloat newCamY = submarineY + cameraDistance * sinf(radianHorizontal) * cosf(radianVertical);
+	GLfloat newCamZ = submarineZ + cameraDistance * sinf(radianVertical);
+
+	printf("Camera: ( %.2f, %.2f, %.2f ); Submarine: ( %.2f, %.2f, %.2f )\n", newCamX, newCamY, newCamZ, submarineX, submarineY, submarineZ);
+
+	gluLookAt(newCamX, newCamY, newCamZ, submarineX, submarineY, submarineZ, 0, 0, 1);
+}
+
 void idleScene(void)
 {
 	glutPostRedisplay();
@@ -338,9 +379,7 @@ void display(void)
 
 	glPolygonMode(GL_FRONT_AND_BACK, isDrawingWireFrame ? GL_LINE : GL_FILL);
 
-	gluLookAt(cameraPosition[0], cameraPosition[1], cameraPosition[2],
-		cameraLookAt[0], cameraLookAt[1], cameraLookAt[2],
-		0, 0, 1);
+	moveCamera();
 
 	drawSubmarine();
 
@@ -356,13 +395,11 @@ void handleSpecialKeyboard(unsigned char key, GLint x, GLint y)
 	// Handle vertical movement
 	if (key == GLUT_KEY_UP)
 	{
-		cameraPosition[2] += cameraStepSize;
-		cameraLookAt[2] += cameraStepSize;
+		submarineZ += cameraStepSize;
 	}
 	if (key == GLUT_KEY_DOWN)
 	{
-		cameraPosition[2] -= cameraStepSize;
-		cameraLookAt[2] -= cameraStepSize;
+		submarineZ -= cameraStepSize;
 	}
 }
 
@@ -373,25 +410,19 @@ void handleKeyboard(unsigned char key, GLint x, GLint y)
 	// Handle lateral movement
 	if (key == 'w' || key == 'W')
 	{
-		cameraPosition[1] += cameraStepSize;
-		/*printf("Current XYZ: ( %.2f, %.2f, %.2f ); LookAt XYZ: ( %.2f, %.2f, %.2f ); Submarinee XYZ: ( %.2f, %.2f, %.2f ) \n",
-			cameraPosition[0], cameraPosition[1], cameraPosition[2], cameraLookAt[0], cameraLookAt[1], cameraLookAt[2], submarineX, submarineY, submarineZ);*/
-		cameraLookAt[1] += cameraStepSize;
+		submarineY += cameraStepSize;
 	}
 	if (key == 'a' || key == 'A')
 	{
-		cameraPosition[0] -= cameraStepSize;
-		cameraLookAt[0] -= cameraStepSize;
+		submarineX -= cameraStepSize;
 	}
 	if (key == 's' || key == 'S')
 	{
-		cameraPosition[1] -= cameraStepSize;
-		cameraLookAt[1] -= cameraStepSize;
+		submarineY -= cameraStepSize;
 	}
 	if (key == 'd' || key == 'D')
 	{
-		cameraPosition[0] += cameraStepSize;
-		cameraLookAt[0] += cameraStepSize;
+		submarineX += cameraStepSize;
 	}
 	// Toggle the state variables
 	if (key == 'f' || key == 'F')
@@ -485,6 +516,7 @@ int main(int argc, char** argv)
 	glutReshapeFunc(windowReshape);
 	glutKeyboardFunc(handleKeyboard);
 	glutSpecialFunc(handleSpecialKeyboard);
+	glutPassiveMotionFunc(moveMouse);
 
 	glutIdleFunc(idleScene);
 
