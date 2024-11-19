@@ -45,9 +45,6 @@ GLfloat windowHeight = 600;
 GLint windowPositionX = 100;
 GLint windowPositionY = 100;
 
-// Camera movement step size
-GLfloat cameraStepSize = 0.5f;
-
 // State variables
 GLboolean isFullscreen = GL_FALSE;
 GLboolean isDrawingWireFrame = GL_FALSE;
@@ -55,10 +52,15 @@ GLboolean isDrawingWireFrame = GL_FALSE;
 // Submarine varaibles
 ObjValues submarineValues;
 Group submarine[4];
+GLfloat submarineSpeed = 0.1f;
 GLint* submarineGroupCount = 0;
 GLfloat submarineX = 0.0f;
 GLfloat submarineY = 0.0f;
 GLfloat submarineZ = 0.0f;
+
+// Keyboard Varibales
+GLboolean keyStates[256] = { GL_FALSE };
+GLboolean specialKeyStates[256] = { GL_FALSE };
 
 // Mouse Look Variables
 GLint prevX = 0;
@@ -67,6 +69,20 @@ GLfloat cameraDistance = 200.0f;
 GLfloat horizontalMouseAngle = 0.0f;
 GLfloat verticalMouseAngle = 0.0f;
 GLfloat sensitivity = 0.5f;
+
+// Scene Variables
+GLint bottomDiscRadius = 500;
+GLint bottomDiscSegments = 48;
+GLint wallHeight = 500;
+
+// Helper function to set the material of a surface
+void setMaterial(GLfloat ambient[], GLfloat diffuse[], GLfloat specular[], GLfloat shininess)
+{
+	glMaterialfv(GL_FRONT, GL_AMBIENT, ambient);
+	glMaterialfv(GL_FRONT, GL_DIFFUSE, diffuse);
+	glMaterialfv(GL_FRONT, GL_SPECULAR, specular);
+	glMaterialf(GL_FRONT, GL_SHININESS, shininess);
+}
 
 // Method that reads through a file, counting the pieces of a certain object, 
 // whether it's coral or the submarine pieces. It increases a groupCount
@@ -222,28 +238,25 @@ void allocateAndPopulateHelper(FILE* file, ObjValues* values, Group* groups, GLi
 	}*/
 }
 
+/*
+* This method is used to render an object based on their values that were previously
+* initialized, and their groups where memory was previously allocated. This method 
+* sets an objects normal and vertex for each triangle that gets drawn
+*/
 void renderObject(ObjValues* values, Group* group)
 {
 	glBegin(GL_TRIANGLES);
-	//printf("There are %d faces in this loop iteration\n", group->faceCount);
 	for (GLint i = 0; i < group->faceCount; i++)
 	{
 		Face* currentFace = &group->faces[i];
 
-		// TEMPORARY
-		GLfloat color = (GLfloat) i / group->faceCount;
-		glColor3f(color, color, 0.2f);
 		for (GLint j = 0; j < 3; j++)
 		{
 			GLint vertexIndex = currentFace->v[j];
 			GLint normalIndex = currentFace->vn[j];
 
-			//printf("Vertex index: %d, Normal Index: %d\n", vertexIndex, normalIndex);
-
 			Vertex3* vertex = &values->vertices[vertexIndex];
 			Vertex3* normal = &values->normals[normalIndex];
-
-			//printf("Vertex %d: (%f, %f, %f)\n", vertexIndex, vertex->position[0], vertex->position[1], vertex->position[2]);
 
 			glNormal3f(normal->position[0], normal->position[1], normal->position[2]);
 			glVertex3f(vertex->position[0], vertex->position[1], vertex->position[2]);
@@ -253,6 +266,7 @@ void renderObject(ObjValues* values, Group* group)
 	glEnd();
 }
 
+// Method used to draw the submarine
 void drawSubmarine()
 {
 	glPushMatrix();
@@ -260,14 +274,20 @@ void drawSubmarine()
 	// Move to the look at position
 	glTranslatef(submarineX, submarineY, submarineZ);
 
+	// Rotate the submarine so that it is rotated to the right axis
 	glRotatef(90.0f, 1, 0, 0);
 	glRotatef(-90.0f, 0, 1, 0);
 
-	// Increase the size by 0.5x
-	glScalef(0.5f, 0.5f, 0.5f);
+	// Increase the size by 0.1x
+	glScalef(0.1f, 0.1f, 0.1f);
 
-	// Set submarineColor to yellow
-	glColor3f(1.0f, 1.0f, 0.0f);
+	// Submarine lighting variables so that the submarine is yellow, and slightly shiny
+	GLfloat ambient[] = { 0.5f, 0.5f, 0.0f, 1.0f };
+	GLfloat diffuse[] = { 1.0f, 1.0f, 0.0f, 1.0f };
+	GLfloat specular[] = { 0.5f, 0.5f, 0.5f, 1.0f };
+	GLfloat shininess = 50.0f;
+
+	setMaterial(ambient, diffuse, specular, shininess);
 
 	// Call the draw helper
 	for (GLint i = 0; i < submarineGroupCount; i++)
@@ -286,7 +306,7 @@ void drawSubmarine()
 */
 void drawUnitVectors()
 {
-	GLint lineLegnth = 50;
+	GLint lineLegnth = 25;
 
 	Vertex3 vertices[3];
 	Color colors[3];
@@ -307,6 +327,8 @@ void drawUnitVectors()
 		colors[i].rgb[i] = 1.0;
 	}
 
+	glDisable(GL_LIGHTING);
+
 	glBegin(GL_LINES);
 	glLineWidth(5);
 	for (GLint i = 0; i < 3; i++)
@@ -326,8 +348,78 @@ void drawUnitVectors()
 	glPopMatrix();
 
 	gluDeleteQuadric(quad);
+
+	glEnable(GL_LIGHTING);
 }
 
+/*
+* Method that's used to draw the bottom of the map, or the sandy sea floor.
+* It does so by using a trangle fan, and fills the circle with the sand ppm
+* texture.
+*/
+void drawBottomDisc()
+{
+	glDisable(GL_LIGHTING);
+
+	glColor3f(0.8f, 0.8f, 0.2f);
+
+	glBegin(GL_TRIANGLE_FAN);
+
+	glVertex3f(0.0f, 0.0f, 0.0f);
+
+	GLfloat increment = 2 * PI / bottomDiscSegments;
+
+	for (GLint i = 0; i <= bottomDiscSegments; i++)
+	{
+		GLfloat angle = i * increment;
+
+		// Make the X and Y just so every slightly larger
+		GLfloat x = (bottomDiscRadius + 1) * cos(angle);
+		GLfloat y = (bottomDiscRadius + 1) * sin(angle);
+
+		glVertex3f(x, y, 0.0f);
+	}
+
+	glEnd();
+
+	glEnable(GL_LIGHTING);
+}
+
+void drawCylinderWall()
+{
+	//glDisable(GL_LIGHTING);
+
+	glColor3f(0.8f, 0.8f, 0.2f);
+
+	glBegin(GL_QUAD_STRIP);
+
+	GLfloat increment = 2 * PI / bottomDiscSegments;
+
+	for (GLint i = 0; i <= bottomDiscSegments; i++)
+	{
+		GLfloat angle = i * increment;
+
+		GLfloat x = bottomDiscRadius * cos(angle);
+		GLfloat y = bottomDiscRadius * sin(angle);
+
+		glVertex3f(x, y, 0.0f);
+		
+		glVertex3f(x, y, wallHeight);
+	}
+
+	glEnd();
+
+	//glEnable(GL_LIGHTING);
+}
+
+/*
+* Method that is used to handle the mouse movement across the screen to rotate 
+* the camera. It uses global prevX and prevY variables so that it can keep 
+* track of the mouse position. It sets the horizontal mouse angle (the azimuth)
+* based on the sensitivity and the difference, and also sets the vertical based 
+* on the same properties. It keeps the vertical within bounds, and makes sure
+* the horizontal doesn't get some large (or negatively large) number.
+*/
 void moveMouse(GLint x, GLint y)
 {
 	GLint xDiff = x - prevX;
@@ -350,6 +442,15 @@ void moveMouse(GLint x, GLint y)
 	glutPostRedisplay();
 }
 
+/*
+* This method calculates where the camera should be based on a sphere on where
+* the submarine lies, sets the new camera based on this, and makes sure the 
+* camera is looking at the position of the submarine. It first calculates the
+* horizontal and vertical radians of the mouse angles, and then it calculates
+* the new postion of the camera based on this web resource:
+* https://mathinsight.org/spherical_coordinates, retrieved from relationship
+* (1)l except I added the submarine position to properly offset the camera
+*/
 void moveCamera()
 {
 	GLfloat radianHorizontal = horizontalMouseAngle * (PI / 180.0f);
@@ -364,66 +465,12 @@ void moveCamera()
 	gluLookAt(newCamX, newCamY, newCamZ, submarineX, submarineY, submarineZ, 0, 0, 1);
 }
 
-void idleScene(void)
+// Function to handle standard key down presses. We handle the state varaibles
+// in this function
+void handleKeyboardDown(unsigned char key, GLint x, GLint y)
 {
-	glutPostRedisplay();
-}
+	keyStates[key] = GL_TRUE;
 
-// Display function that sets what the camera is looking at, draws the vectors,
-// the scene, etc.
-void display(void)
-{
-	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-	glLoadIdentity();
-
-	glPolygonMode(GL_FRONT_AND_BACK, isDrawingWireFrame ? GL_LINE : GL_FILL);
-
-	moveCamera();
-
-	drawSubmarine();
-
-	drawUnitVectors();
-
-	glutSwapBuffers();
-}
-
-// Function to handle special keys on the keyboard. This method handles
-// vertical movement of the camera / submarine
-void handleSpecialKeyboard(unsigned char key, GLint x, GLint y)
-{
-	// Handle vertical movement
-	if (key == GLUT_KEY_UP)
-	{
-		submarineZ += cameraStepSize;
-	}
-	if (key == GLUT_KEY_DOWN)
-	{
-		submarineZ -= cameraStepSize;
-	}
-}
-
-// Function to handle standard keyboard keys, this method handles movement,
-// state variables, and ending the application
-void handleKeyboard(unsigned char key, GLint x, GLint y)
-{
-	// Handle lateral movement
-	if (key == 'w' || key == 'W')
-	{
-		submarineY += cameraStepSize;
-	}
-	if (key == 'a' || key == 'A')
-	{
-		submarineX -= cameraStepSize;
-	}
-	if (key == 's' || key == 'S')
-	{
-		submarineY -= cameraStepSize;
-	}
-	if (key == 'd' || key == 'D')
-	{
-		submarineX += cameraStepSize;
-	}
 	// Toggle the state variables
 	if (key == 'f' || key == 'F')
 	{
@@ -450,27 +497,123 @@ void handleKeyboard(unsigned char key, GLint x, GLint y)
 	}
 }
 
+// Function to handle the release of standard keys
+void handleKeyboardUp(unsigned char key, GLint x, GLint y)
+{
+	keyStates[key] = GL_FALSE;
+}
+
+// Function to handle special key down presses
+void handleSpecialKeyboardDown(unsigned char key, GLint x, GLint y)
+{
+	specialKeyStates[key] = GL_TRUE;
+}
+
+// Function to handle the release of special keys
+void handleSpecialKeyboardUp(unsigned char key, GLint x, GLint y)
+{
+	specialKeyStates[key] = GL_FALSE;
+}
+
+// Function that's used to move the submarine if any of the keys are pressed
+void handleMovement()
+{
+	// Handle lateral movement
+	if (keyStates['w'] || keyStates['W'])
+	{
+		submarineY += submarineSpeed;
+	}
+	if (keyStates['a'] || keyStates['A'])
+	{
+		submarineX -= submarineSpeed;
+	}
+	if (keyStates['s'] || keyStates['S'])
+	{
+		submarineY -= submarineSpeed;
+	}
+	if (keyStates['d'] || keyStates['D'])
+	{
+		submarineX += submarineSpeed;
+	}
+
+	// Handle vertical movement
+	if (specialKeyStates[GLUT_KEY_UP])
+	{
+		submarineZ += submarineSpeed;
+	}
+	if (specialKeyStates[GLUT_KEY_DOWN])
+	{
+		submarineZ -= submarineSpeed;
+	}
+}
+
+// Idle function to handle idle changes
+void idleScene(void)
+{
+	handleMovement();
+
+	glutPostRedisplay();
+}
+
+// Display function that sets what the camera is looking at, draws the vectors,
+// the scene, etc.
+void display(void)
+{
+	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+	glLoadIdentity();
+
+	glPolygonMode(GL_FRONT_AND_BACK, isDrawingWireFrame ? GL_LINE : GL_FILL);
+
+	moveCamera();
+
+	// Make sure the light comes from the top
+	GLfloat lightPosition[] = { 0.0f, 0.0f, 1.0f, 0.0f };
+	glLightfv(GL_LIGHT0, GL_POSITION, lightPosition);
+
+	drawSubmarine();
+
+	drawBottomDisc();
+	drawCylinderWall();
+
+	drawUnitVectors();
+
+	glutSwapBuffers();
+}
+
 void windowReshape(GLint width, GLint height)
 {
 	glViewport(0, 0, width, height);
 	glMatrixMode(GL_PROJECTION);
 	glLoadIdentity();
-	gluPerspective(45.0f, (float)width / (float)height, 1.0f, 1000.0f);
+	gluPerspective(45.0f, (float)width / (float)height, 1.0f, 2000.0f);
 	glMatrixMode(GL_MODELVIEW);
 }
 
 void initializeGL(void)
 {
 	glEnable(GL_DEPTH_TEST);
-	// Add back in when implmenting lighting
-	// glEnable(GL_LIGHTING);
-	// glEnable(GL_LIGHT0);
-	// glEnable(GL_NORMALIZE);
+	glEnable(GL_LIGHTING);
+	glEnable(GL_LIGHT0);
+	glEnable(GL_NORMALIZE);
 	glClearColor(0, 0, 0, 1.0);
+
+	// Global ambient light
+	GLfloat globalAmbient[] = { 0.25f, 0.25f, 0.25f, 1.0f };
+	glLightModelfv(GL_LIGHT_MODEL_AMBIENT, globalAmbient);
+
+	// Set up the sunlight
+	GLfloat lightPosition[] = { 0.0f, 0.0f, 1.0f, 0.0f };
+	GLfloat lightDiffuse[] = { 1.0f, 1.0f, 0.8f, 1.0f };  
+	GLfloat lightSpecular[] = { 1.0f, 1.0f, 0.8f, 1.0f }; 
+
+	glLightfv(GL_LIGHT0, GL_POSITION, lightPosition);
+	glLightfv(GL_LIGHT0, GL_DIFFUSE, lightDiffuse);
+	glLightfv(GL_LIGHT0, GL_SPECULAR, lightSpecular);
 
 	glMatrixMode(GL_PROJECTION);
 	glLoadIdentity();
-	gluPerspective(45, (float)windowWidth / (float)windowHeight, 1.0f, 1000.0f);
+	gluPerspective(45, (float)windowWidth / (float)windowHeight, 1.0f, 2000.0f);
 	glMatrixMode(GL_MODELVIEW);
 }
 
@@ -514,8 +657,12 @@ int main(int argc, char** argv)
 
 	glutDisplayFunc(display);
 	glutReshapeFunc(windowReshape);
-	glutKeyboardFunc(handleKeyboard);
-	glutSpecialFunc(handleSpecialKeyboard);
+
+	glutKeyboardFunc(handleKeyboardDown);
+	glutKeyboardUpFunc(handleKeyboardUp);
+	glutSpecialFunc(handleSpecialKeyboardDown);
+	glutSpecialUpFunc(handleSpecialKeyboardUp);
+
 	glutPassiveMotionFunc(moveMouse);
 
 	glutIdleFunc(idleScene);
