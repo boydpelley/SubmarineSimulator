@@ -15,6 +15,8 @@ typedef struct
 	GLfloat rgb[3];
 } Color;
 
+typedef GLubyte ColorTexture[3];
+
 typedef struct
 {
 	GLint v[3];
@@ -74,6 +76,10 @@ GLfloat sensitivity = 0.5f;
 GLint bottomDiscRadius = 500;
 GLint bottomDiscSegments = 48;
 GLint wallHeight = 500;
+
+// Textures
+GLuint sandTexture;
+
 
 // Helper function to set the material of a surface
 void setMaterial(GLfloat ambient[], GLfloat diffuse[], GLfloat specular[], GLfloat shininess)
@@ -266,9 +272,87 @@ void renderObject(ObjValues* values, Group* group)
 	glEnd();
 }
 
+/*
+* Method to read PPM files to set a TextureID to it. It reads PPM files of most widths
+* and heights, allocating memory dynamically. It reads through the PPM file and
+* creates a mipmap to render the texture on top of. Handles errors if the file
+* cannot be properly read or manipulated. Returns an unsigned integer representing
+* the ID of the created texture.
+*/
+GLuint readPPM(char * filename)
+{
+	FILE* file = fopen(filename, "rb");
+	if (!file)
+	{
+		printf("Could not open file %s\n", filename);
+		return 1;
+	}
+
+	char line[256];
+	char header[3];
+	GLint width, height, maxColor;
+
+	if (!fgets(line, sizeof(line), file))
+	{
+		printf("Error with reading the header\n");
+		fclose(file);
+		return 1;
+	}
+
+	sscanf_s(line, "%s2", header, (unsigned)_countof(header));
+	if (header[0] != 'P' || header[1] != '6')
+	{
+		printf("Error with file, make sure it's a valid format\n");
+		fclose(file);
+		return 1;
+	}
+
+	if (!fgets(line, sizeof(line), file))
+	{
+		printf("Error reading sizes\n");
+		fclose(file);
+		return 1;
+	}
+	sscanf_s(line, "%d %d", &width, &height);
+
+	if (!fgets(line, sizeof(line), file))
+	{
+		printf("Error reading max color\n");
+		fclose(file);
+		return 1;
+	}
+	sscanf_s(line, "%d", &maxColor);
+
+	GLubyte *textureData = (GLubyte *)malloc(width * height * 3);
+	if (!textureData) 
+	{
+		printf("Error allocating memory for textureData\n");
+		fclose(file);
+		return 1;
+	}
+
+	fread(textureData, 3, width * height, file);
+	fclose(file);
+
+	GLuint textureID = 1;
+	glGenTextures(1, &textureID);
+
+	glBindTexture(GL_TEXTURE_2D, textureID);
+
+	gluBuild2DMipmaps(GL_TEXTURE_2D, 3, width, height, GL_RGB, GL_UNSIGNED_BYTE, textureData);
+
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+	
+	free(textureData);
+
+	return textureID;
+}
+
 // Method used to draw the submarine
 void drawSubmarine()
 {
+	glEnable(GL_LIGHTING);
 	glPushMatrix();
 
 	// Move to the look at position
@@ -296,6 +380,7 @@ void drawSubmarine()
 	}
 	
 	glPopMatrix();
+	glDisable(GL_LIGHTING);
 }
 
 /*
@@ -354,62 +439,51 @@ void drawUnitVectors()
 
 /*
 * Method that's used to draw the bottom of the map, or the sandy sea floor.
-* It does so by using a trangle fan, and fills the circle with the sand ppm
-* texture.
+* It does so by using gluDisk, and fills the circle with the spongebob sand 
+* ppm texture.
 */
 void drawBottomDisc()
 {
-	glDisable(GL_LIGHTING);
+	GLfloat emission[] = {0.2f, 0.2f, 0.2f, 1.0f};
+	glMaterialfv(GL_FRONT_AND_BACK, GL_EMISSION, emission);
 
-	glColor3f(0.8f, 0.8f, 0.2f);
+	glEnable(GL_TEXTURE_2D);
+	glBindTexture(GL_TEXTURE_2D, sandTexture);
 
-	glBegin(GL_TRIANGLE_FAN);
+	glColor3f(1.0f, 1.0f, 1.0f);
 
-	glVertex3f(0.0f, 0.0f, 0.0f);
+	GLUquadric* quadric = gluNewQuadric();
+	gluQuadricTexture(quadric, GL_TRUE);
 
-	GLfloat increment = 2 * PI / bottomDiscSegments;
+	gluDisk(quadric, 0.0, bottomDiscRadius + 1, bottomDiscSegments, 1);
 
-	for (GLint i = 0; i <= bottomDiscSegments; i++)
-	{
-		GLfloat angle = i * increment;
+	gluDeleteQuadric(quadric);
 
-		// Make the X and Y just so every slightly larger
-		GLfloat x = (bottomDiscRadius + 1) * cos(angle);
-		GLfloat y = (bottomDiscRadius + 1) * sin(angle);
-
-		glVertex3f(x, y, 0.0f);
-	}
-
-	glEnd();
-
-	glEnable(GL_LIGHTING);
+	glDisable(GL_TEXTURE_2D);
 }
 
+/*
+* Method to draw the walls of the scene using the same texture as the floor.
+* It uses gluQuadrics to draw a gluCylinder.
+*/
 void drawCylinderWall()
 {
-	//glDisable(GL_LIGHTING);
+	GLfloat emission[] = { 0.2f, 0.2f, 0.2f, 1.0f };
+	glMaterialfv(GL_FRONT_AND_BACK, GL_EMISSION, emission);
 
-	glColor3f(0.8f, 0.8f, 0.2f);
+	glEnable(GL_TEXTURE_2D);
+	glBindTexture(GL_TEXTURE_2D, sandTexture);
 
-	glBegin(GL_QUAD_STRIP);
+	glColor3f(1.0f, 1.0f, 1.0f);
 
-	GLfloat increment = 2 * PI / bottomDiscSegments;
+	GLUquadric* quadric = gluNewQuadric();
+	gluQuadricTexture(quadric, GL_TRUE);
 
-	for (GLint i = 0; i <= bottomDiscSegments; i++)
-	{
-		GLfloat angle = i * increment;
+	gluCylinder(quadric, bottomDiscRadius, bottomDiscRadius, wallHeight, bottomDiscSegments, bottomDiscSegments);
 
-		GLfloat x = bottomDiscRadius * cos(angle);
-		GLfloat y = bottomDiscRadius * sin(angle);
+	gluDeleteQuadric(quadric);
 
-		glVertex3f(x, y, 0.0f);
-		
-		glVertex3f(x, y, wallHeight);
-	}
-
-	glEnd();
-
-	//glEnable(GL_LIGHTING);
+	glDisable(GL_TEXTURE_2D);
 }
 
 /*
@@ -460,7 +534,7 @@ void moveCamera()
 	GLfloat newCamY = submarineY + cameraDistance * sinf(radianHorizontal) * cosf(radianVertical);
 	GLfloat newCamZ = submarineZ + cameraDistance * sinf(radianVertical);
 
-	printf("Camera: ( %.2f, %.2f, %.2f ); Submarine: ( %.2f, %.2f, %.2f )\n", newCamX, newCamY, newCamZ, submarineX, submarineY, submarineZ);
+	//printf("Camera: ( %.2f, %.2f, %.2f ); Submarine: ( %.2f, %.2f, %.2f )\n", newCamX, newCamY, newCamZ, submarineX, submarineY, submarineZ);
 
 	gluLookAt(newCamX, newCamY, newCamZ, submarineX, submarineY, submarineZ, 0, 0, 1);
 }
@@ -632,6 +706,14 @@ void initSub()
 	fclose(file);
 }
 
+void init()
+{
+	initSub();
+
+	sandTexture = readPPM("spongebob-sand.ppm");
+	printf("Initialized sand texture with ID: %u\n", sandTexture);
+}
+
 // Method to free the memory of all of the objects we allocated memory for
 void freeObjects()
 {
@@ -646,8 +728,6 @@ void freeObjects()
 // The main method that ties everything together
 int main(int argc, char** argv)
 {
-	initSub();
-
 	glutInit(&argc, argv);
 
 	glutInitDisplayMode(GLUT_RGB | GLUT_DEPTH | GLUT_DOUBLE);
@@ -664,6 +744,8 @@ int main(int argc, char** argv)
 	glutSpecialUpFunc(handleSpecialKeyboardUp);
 
 	glutPassiveMotionFunc(moveMouse);
+
+	init();
 
 	glutIdleFunc(idleScene);
 
