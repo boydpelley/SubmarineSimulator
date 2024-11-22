@@ -50,6 +50,7 @@ GLint windowPositionY = 100;
 // State variables
 GLboolean isFullscreen = GL_FALSE;
 GLboolean isDrawingWireFrame = GL_FALSE;
+GLboolean isDrawingFog = GL_TRUE;
 
 // Submarine varaibles
 ObjValues submarineValues;
@@ -487,6 +488,28 @@ void drawCylinderWall()
 }
 
 /*
+* Function that's used to draw fog, which simulates the look of being under
+* water. It draws a blue fog and draws it exponentially. The fog is toggled on
+* and off with the 'b' key.
+*/
+void drawFog()
+{
+	if (isDrawingFog)
+	{
+		glEnable(GL_FOG);
+	}
+	else
+	{
+		glDisable(GL_FOG);
+	}
+	GLfloat fogColor[] = { 0.01f, 0.2f, 0.4f, 1.0f };
+
+	glFogfv(GL_FOG_COLOR, fogColor);
+	glFogf(GL_FOG_MODE, GL_EXP);
+	glFogf(GL_FOG_DENSITY, 0.0025f);
+}
+
+/*
 * Method that is used to handle the mouse movement across the screen to rotate 
 * the camera. It uses global prevX and prevY variables so that it can keep 
 * track of the mouse position. It sets the horizontal mouse angle (the azimuth)
@@ -562,6 +585,11 @@ void handleKeyboardDown(unsigned char key, GLint x, GLint y)
 	if (key == 'u' || key == 'U')
 	{
 		isDrawingWireFrame = !isDrawingWireFrame;
+		glutPostRedisplay();
+	}
+	if (key == 'b' || key == 'B')
+	{
+		isDrawingFog = !isDrawingFog;
 		glutPostRedisplay();
 	}
 
@@ -645,6 +673,8 @@ void display(void)
 	GLfloat lightPosition[] = { 0.0f, 0.0f, 1.0f, 0.0f };
 	glLightfv(GL_LIGHT0, GL_POSITION, lightPosition);
 
+	drawFog();
+
 	drawSubmarine();
 
 	drawBottomDisc();
@@ -655,6 +685,10 @@ void display(void)
 	glutSwapBuffers();
 }
 
+/*
+* Function that handles window reshaping by calling gluPerspective when the 
+* window is resized.
+*/
 void windowReshape(GLint width, GLint height)
 {
 	glViewport(0, 0, width, height);
@@ -706,6 +740,7 @@ void initSub()
 	fclose(file);
 }
 
+// Method to initialize data and textures
 void init()
 {
 	initSub();
