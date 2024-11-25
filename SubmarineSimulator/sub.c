@@ -78,9 +78,47 @@ GLint bottomDiscRadius = 500;
 GLint bottomDiscSegments = 48;
 GLint wallHeight = 500;
 
+// Wave Variables
+GLfloat subdivisionSize = 25.0f;
+GLfloat waveHeightOffset = 450.0f;
+GLfloat wavePhase = 50.0f;
+GLfloat waveTimeValue = 0.0f;
+GLfloat waveAmplitude = 40.0f;
+GLfloat waveVelocity = 0.0025f;
+GLfloat waveLength = 450.0f;
+
 // Textures
 GLuint sandTexture;
 
+/*
+* A helper function to return the normal of three vectors. It calculates the cross
+* product of the two vectors, and returns the normal
+*/
+Vertex3 calculateNormal(Vertex3 v1, Vertex3 v2, Vertex3 v3) 
+{
+	GLfloat edge1[3] = { v2.position[0] - v1.position[0], v2.position[1] - v1.position[1], v2.position[2] - v1.position[2] };
+	GLfloat edge2[3] = { v3.position[0] - v1.position[0], v3.position[1] - v1.position[1], v3.position[2] - v1.position[2] };
+
+	GLfloat x = edge1[1] * edge2[2] - edge1[2] * edge2[1];
+	GLfloat y = edge1[2] * edge2[0] - edge1[0] * edge2[2];
+	GLfloat z = edge1[0] * edge2[1] - edge1[1] * edge2[0];
+
+	Vertex3 normal = { x, y, z };
+	return normal;
+}
+
+/*
+* Helper function that normalizes a vector.
+*/
+void normalizeVector(Vertex3* vector)
+{
+	GLfloat length = sqrtf(vector->position[0] * vector->position[0] +
+		vector->position[1] * vector->position[1] + vector->position[2] * vector->position[2]);
+
+	vector->position[0] /= length;
+	vector->position[1] /= length;
+	vector->position[2] /= length;
+}
 
 // Helper function to set the material of a surface
 void setMaterial(GLfloat ambient[], GLfloat diffuse[], GLfloat specular[], GLfloat shininess)
@@ -510,6 +548,72 @@ void drawFog()
 }
 
 /*
+* Function that's used to draw a wave. It starts from -600, -600 and goes all the
+* way to 600, 600, with a fixed height; the variance coming from the heights 
+* calculated in the function. It draws the waves diagonally, has lighting set to 
+* it so it resembles water, and uses GL_TRIANGLES to draw the surface. It sets the
+* normals of the triangles to properly reflect lights hitting the surface.
+*/
+void drawWave()
+{
+	glEnable(GL_LIGHTING);
+
+	// Used to draw more or less waves based on the wavelength
+	GLfloat frequency = 2.0f * PI / waveLength;
+
+	// Set the lighting properties of the wave
+	GLfloat ambient[] = { 0.02f, 0.25f, 0.5f, 1.0f };
+	GLfloat diffuse[] = { 0.0f, 0.03f, 0.5f, 1.0f };
+	GLfloat specular[] = { 0.5f, 0.5f, 0.5f, 1.0f };
+	GLfloat shininess = 25.0f;
+
+	setMaterial(ambient, diffuse, specular, shininess);
+
+	// Loop from -600 to 600
+	for (GLfloat x = -600; x < 600; x += subdivisionSize)
+	{
+		for (GLfloat y = -600; y < 600; y += subdivisionSize)
+		{
+			// The calculation of the x points is based on the following pseudocode:
+			//heightAtVertex = sin(valueBasedOnPosition + phase + timeValue) * waveAmplitude
+
+			// Multiply the frequency by the x + z (+ subDivisionSize) to properly set the wavelength
+			GLfloat z1 = (sinf((x + y) * frequency + wavePhase + waveTimeValue) * waveAmplitude) + waveHeightOffset;
+			GLfloat z2 = (sinf((x + subdivisionSize + y) * frequency + wavePhase + waveTimeValue) * waveAmplitude) + waveHeightOffset;
+			GLfloat z3 = (sinf((x + subdivisionSize + y + subdivisionSize) * frequency + wavePhase + waveTimeValue) * waveAmplitude) + waveHeightOffset;
+			GLfloat z4 = (sinf((x + y + subdivisionSize) * frequency + wavePhase + waveTimeValue) * waveAmplitude) + waveHeightOffset;
+
+			// Set the vertices to the x, y, and z values with their respective offsets
+			Vertex3 v1 = { x, y, z1 };
+			Vertex3 v2 = { x + subdivisionSize, y, z2 };
+			Vertex3 v3 = { x + subdivisionSize, y + subdivisionSize, z3 };
+			Vertex3 v4 = { x, y + subdivisionSize, z4 };
+
+			// Find the normals between the two triangles we are drawing
+			Vertex3 normal1 = calculateNormal(v1, v2, v3);
+			normalizeVector(&normal1);
+
+			Vertex3 normal2 = calculateNormal(v1, v3, v4);
+			normalizeVector(&normal2);
+
+			// Draw the two triangles, setting the normal each triangle
+			glBegin(GL_TRIANGLES);
+			glNormal3f(normal1.position[0], normal1.position[1], normal1.position[2]);
+			glVertex3f(v1.position[0], v1.position[1], v1.position[2]);
+			glVertex3f(v2.position[0], v2.position[1], v2.position[2]);
+			glVertex3f(v3.position[0], v3.position[1], v3.position[2]);
+			
+			glNormal3f(normal2.position[0], normal2.position[1], normal2.position[2]);
+			glVertex3f(v1.position[0], v1.position[1], v1.position[2]);
+			glVertex3f(v3.position[0], v3.position[1], v3.position[2]);
+			glVertex3f(v4.position[0], v4.position[1], v4.position[2]);
+			glEnd();
+		}
+	}
+	glDisable(GL_LIGHTING);
+}
+
+/*
 * Method that is used to handle the mouse movement across the screen to rotate 
 * the camera. It uses global prevX and prevY variables so that it can keep 
 * track of the mouse position. It sets the horizontal mouse angle (the azimuth)
@@ -654,6 +758,9 @@ void idleScene(void)
 {
 	handleMovement();
 
+	waveTimeValue += waveVelocity;
+	if (waveTimeValue > 100000) waveTimeValue = 0;
+
 	glutPostRedisplay();
 }
 
@@ -679,6 +786,8 @@ void display(void)
 
 	drawBottomDisc();
 	drawCylinderWall();
+
+	drawWave();
 
 	drawUnitVectors();
 
