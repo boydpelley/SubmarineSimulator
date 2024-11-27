@@ -29,6 +29,7 @@ typedef struct
 	Vertex3* normals;
 	int vertexCount;
 	int normalCount;
+	int groupcount;
 } ObjValues;
 
 typedef struct
@@ -36,6 +37,12 @@ typedef struct
 	Face* faces;
 	int faceCount;
 } Group;
+
+typedef struct
+{
+	ObjValues values;
+	Group groups[100];
+} Object;
 
 // Beginning camera position
 GLfloat cameraPosition[] = { 0.0f, -200.0f, 0.0f };
@@ -53,13 +60,15 @@ GLboolean isDrawingWireFrame = GL_FALSE;
 GLboolean isDrawingFog = GL_TRUE;
 
 // Submarine varaibles
-ObjValues submarineValues;
-Group submarine[4];
-GLfloat submarineSpeed = 0.1f;
-GLint* submarineGroupCount = 0;
+Object submarine;
+GLfloat submarineSpeed = 1.0f;
 GLfloat submarineX = 0.0f;
-GLfloat submarineY = 0.0f;
-GLfloat submarineZ = 0.0f;
+GLfloat submarineY = -150.0f;
+GLfloat submarineZ = 150.0f;
+
+// Coral Variables
+Object coral[14];
+Vertex3 coralPositions[14];
 
 // Keyboard Varibales
 GLboolean keyStates[256] = { GL_FALSE };
@@ -84,11 +93,20 @@ GLfloat waveHeightOffset = 450.0f;
 GLfloat wavePhase = 50.0f;
 GLfloat waveTimeValue = 0.0f;
 GLfloat waveAmplitude = 40.0f;
-GLfloat waveVelocity = 0.0025f;
+GLfloat waveVelocity = 0.025f;
 GLfloat waveLength = 450.0f;
 
 // Textures
 GLuint sandTexture;
+
+/*
+* This method generates a random float between any two random number inclusively.
+*/
+GLfloat generateRandomFloat(GLfloat minValue, GLfloat maxValue)
+{
+	GLfloat random = rand() / (float)RAND_MAX;
+	return (GLfloat)(minValue + random * (maxValue - minValue));
+}
 
 /*
 * A helper function to return the normal of three vectors. It calculates the cross
@@ -129,10 +147,31 @@ void setMaterial(GLfloat ambient[], GLfloat diffuse[], GLfloat specular[], GLflo
 	glMaterialf(GL_FRONT, GL_SHININESS, shininess);
 }
 
+// Helper method to initialize the values and allocate memory for Object structs
+void allocateObject(Object** object)
+{
+	*object = (Object*)malloc(sizeof(Object));
+	if (!*object)
+	{
+		printf("Error allocating memory for Object\n");
+		exit(1);
+	}
+
+	(*object)->values.vertexCount = 0;
+	(*object)->values.normalCount = 0;
+	(*object)->values.groupcount = 0;
+
+	for (GLint i = 0; i < 10; i++)
+	{
+		(*object)->groups[i].faceCount = 0;
+		(*object)->groups[i].faces = NULL;
+	}
+}
+
 // Method that reads through a file, counting the pieces of a certain object, 
-// whether it's coral or the submarine pieces. It increases a groupCount
-// variable that gets passed into the function for use in other methods
-void countElements(FILE* file, ObjValues* values, Group* groups, int* groupCount)
+// whether it's coral or the submarine pieces. It increases trh groupCount 
+// for each object
+void countElements(FILE* file, Object* object)
 {
 	char line[128];
 	int currentGroup = -1;
@@ -144,24 +183,24 @@ void countElements(FILE* file, ObjValues* values, Group* groups, int* groupCount
 		{
 			currentGroup++;
 
-			groups[currentGroup].faceCount = 0;
+			object->groups[currentGroup].faceCount = 0;
 			
-			(*groupCount)++;
+			object->values.groupcount++;
 		}
 		// If we are on a vertex line
 		else if (line[0] == 'v' && line[1] != 'n')
 		{
-			values->vertexCount++;
+			object->values.vertexCount++;
 		}
 		// If we are on a normal line
 		else if (line[0] == 'v' && line[1] == 'n')
 		{
-			values->normalCount++;
+			object->values.normalCount++;
 		}
 		// If we are on a face line
 		else if (line[0] == 'f')
 		{
-			groups[currentGroup].faceCount++;
+			object->groups[currentGroup].faceCount++;
 		}
 	}
 
@@ -171,26 +210,26 @@ void countElements(FILE* file, ObjValues* values, Group* groups, int* groupCount
 
 // Function to allocate memory for all of the groups of a specific object to be
 // rendered.
-void allocateMemory(ObjValues* values, Group* groups, GLint groupCount)
+void allocateMemory(Object* object)
 {
-	values->vertices = (Vertex3*)malloc(sizeof(Vertex3) * (values->vertexCount));
-	if (!values->vertices)
+	object->values.vertices = (Vertex3*)malloc(sizeof(Vertex3) * (object->values.vertexCount));
+	if (!object->values.vertices)
 	{
 		printf("Error allocating memory for the vertices\n");
 		exit(1);
 	}
 
-	values->normals = (Vertex3*)malloc(sizeof(Vertex3) * (values->normalCount));
-	if (!values->normals)
+	object->values.normals = (Vertex3*)malloc(sizeof(Vertex3) * (object->values.normalCount));
+	if (!object->values.normals)
 	{
 		printf("Error allocating memory for the normals\n");
 		exit(1);
 	}
-	for (int i = 0; i < groupCount; i++)
+	for (int i = 0; i < object->values.groupcount; i++)
 	{
 		
-		groups[i].faces = (Face*)malloc(sizeof(Face) * (groups[i].faceCount));
-		if (!groups[i].faces)
+		object->groups[i].faces = (Face*)malloc(sizeof(Face) * (object->groups[i].faceCount));
+		if (!object->groups[i].faces)
 		{
 			printf("Error allocating memory for the faces at index: %d\n", i);
 			exit(1);
@@ -202,7 +241,7 @@ void allocateMemory(ObjValues* values, Group* groups, GLint groupCount)
 * Method used to read through a file, and set the values for the vertices, 
 * normals, and faces for all of the groups of an object
 */
-void setValues(FILE* file, ObjValues* values, Group* groups, GLint groupCount)
+void setValues(FILE* file, Object* object)
 {
 	int vertexCounter = 0, normalCounter = 0, faceCounter = 0;
 
@@ -220,47 +259,47 @@ void setValues(FILE* file, ObjValues* values, Group* groups, GLint groupCount)
 		else if (line[0] == 'v' && line[1] != 'n')
 		{
 			if (sscanf_s(line, "v %f %f %f",
-				&values->vertices[vertexCounter].position[0],
-				&values->vertices[vertexCounter].position[1],
-				&values->vertices[vertexCounter].position[2]) == 3)
+				&object->values.vertices[vertexCounter].position[0],
+				&object->values.vertices[vertexCounter].position[1],
+				&object->values.vertices[vertexCounter].position[2]) == 3)
 			{
 				vertexCounter++;
-				printf("Group: %d, Vertex: %d\n", currentGroup, vertexCounter);
+				//printf("Group: %d, Vertex: %d\n", currentGroup, vertexCounter);
 			}
 		}
 		else if (line[0] == 'v' && line[1] == 'n')
 		{
 			if (sscanf_s(line, "vn %f %f %f",
-				&values->normals[normalCounter].position[0],
-				&values->normals[normalCounter].position[1],
-				&values->normals[normalCounter].position[2]) == 3)
+				&object->values.normals[normalCounter].position[0],
+				&object->values.normals[normalCounter].position[1],
+				&object->values.normals[normalCounter].position[2]) == 3)
 			{
 				normalCounter++;
-				printf("Group: %d, Normal: %d\n", currentGroup, normalCounter);
+				//printf("Group: %d, Normal: %d\n", currentGroup, normalCounter);
 			}
 		}
 		else if (line[0] == 'f')
 		{
 			if (sscanf_s(line, "f %d//%d %d//%d %d//%d",
-				&groups[currentGroup].faces[faceCounter].v[0],
-				&groups[currentGroup].faces[faceCounter].vn[0],
-				&groups[currentGroup].faces[faceCounter].v[1],
-				&groups[currentGroup].faces[faceCounter].vn[1],
-				&groups[currentGroup].faces[faceCounter].v[2],
-				&groups[currentGroup].faces[faceCounter].vn[2]) == 6)
+				&object->groups[currentGroup].faces[faceCounter].v[0],
+				&object->groups[currentGroup].faces[faceCounter].vn[0],
+				&object->groups[currentGroup].faces[faceCounter].v[1],
+				&object->groups[currentGroup].faces[faceCounter].vn[1],
+				&object->groups[currentGroup].faces[faceCounter].v[2],
+				&object->groups[currentGroup].faces[faceCounter].vn[2]) == 6)
 			{
 
-				groups[currentGroup].faces[faceCounter].v[0] -= 1;
-				groups[currentGroup].faces[faceCounter].vn[0] -= 1;
-				groups[currentGroup].faces[faceCounter].v[1] -= 1;
-				groups[currentGroup].faces[faceCounter].vn[1] -= 1;
-				groups[currentGroup].faces[faceCounter].v[2] -= 1;
-				groups[currentGroup].faces[faceCounter].vn[2] -= 1;
+				object->groups[currentGroup].faces[faceCounter].v[0] -= 1;
+				object->groups[currentGroup].faces[faceCounter].vn[0] -= 1;
+				object->groups[currentGroup].faces[faceCounter].v[1] -= 1;
+				object->groups[currentGroup].faces[faceCounter].vn[1] -= 1;
+				object->groups[currentGroup].faces[faceCounter].v[2] -= 1;
+				object->groups[currentGroup].faces[faceCounter].vn[2] -= 1;
 				faceCounter++;
 				//printf("Group: %d, Face: %d\n", currentGroup, faceCounter);
 				for (int i = 0; i < 3; i++)
 				{
-					printf("Group: %d, Face: %d, V: %d, VN: %d\n", currentGroup, faceCounter, groups[currentGroup].faces[faceCounter -1].v[i], groups[currentGroup].faces[faceCounter -1].v[i]);
+					//printf("Group: %d, Face: %d, V: %d, VN: %d\n", currentGroup, faceCounter, object->groups[currentGroup].faces[faceCounter -1].v[i], object->groups[currentGroup].faces[faceCounter -1].v[i]);
 				}
 			}
 		}
@@ -269,18 +308,11 @@ void setValues(FILE* file, ObjValues* values, Group* groups, GLint groupCount)
 
 // Helper method to count, allocate, and set the values for the object to be
 // rendered.
-void allocateAndPopulateHelper(FILE* file, ObjValues* values, Group* groups, GLint* groupCount)
+void allocateAndPopulateHelper(FILE* file, Object* object)
 {
-	countElements(file, values, groups, groupCount);
-	allocateMemory(values, groups, *groupCount);
-	setValues(file, values, groups, *groupCount);
-
-	/*printf("This is the groupCount: %d\n", *groupCount);
-
-	for (int i = 0; i < *groupCount; i++)
-	{
-		printf("There are %d faces in this group\n", groups[i].faceCount);
-	}*/
+	countElements(file, object);
+	allocateMemory(object);
+	setValues(file, object);
 }
 
 /*
@@ -288,25 +320,29 @@ void allocateAndPopulateHelper(FILE* file, ObjValues* values, Group* groups, GLi
 * initialized, and their groups where memory was previously allocated. This method 
 * sets an objects normal and vertex for each triangle that gets drawn
 */
-void renderObject(ObjValues* values, Group* group)
+void renderObject(Object* object)
 {
 	glBegin(GL_TRIANGLES);
-	for (GLint i = 0; i < group->faceCount; i++)
+	for (GLint i = 0; i < object->values.groupcount; i++)
 	{
-		Face* currentFace = &group->faces[i];
-
-		for (GLint j = 0; j < 3; j++)
+		for (GLint j = 0; j < object->groups[i].faceCount; j++)
 		{
-			GLint vertexIndex = currentFace->v[j];
-			GLint normalIndex = currentFace->vn[j];
+			Face* currentFace = &object->groups[i].faces[j];
 
-			Vertex3* vertex = &values->vertices[vertexIndex];
-			Vertex3* normal = &values->normals[normalIndex];
+			for (GLint k = 0; k < 3; k++)
+			{
+				GLint vertexIndex = currentFace->v[k];
+				GLint normalIndex = currentFace->vn[k];
 
-			glNormal3f(normal->position[0], normal->position[1], normal->position[2]);
-			glVertex3f(vertex->position[0], vertex->position[1], vertex->position[2]);
+				Vertex3* vertex = &object->values.vertices[vertexIndex];
+				Vertex3* normal = &object->values.normals[normalIndex];
+
+				glNormal3f(normal->position[0], normal->position[1], normal->position[2]);
+				glVertex3f(vertex->position[0], vertex->position[1], vertex->position[2]);
+			}
 		}
 	}
+	
 
 	glEnd();
 }
@@ -402,7 +438,7 @@ void drawSubmarine()
 	glRotatef(-90.0f, 0, 1, 0);
 
 	// Increase the size by 0.1x
-	glScalef(0.1f, 0.1f, 0.1f);
+	glScalef(0.2f, 0.2f, 0.2f);
 
 	// Submarine lighting variables so that the submarine is yellow, and slightly shiny
 	GLfloat ambient[] = { 0.5f, 0.5f, 0.0f, 1.0f };
@@ -413,12 +449,44 @@ void drawSubmarine()
 	setMaterial(ambient, diffuse, specular, shininess);
 
 	// Call the draw helper
-	for (GLint i = 0; i < submarineGroupCount; i++)
-	{
-		renderObject(&submarineValues, &submarine[i]);
-	}
+	renderObject(&submarine);
 	
 	glPopMatrix();
+	glDisable(GL_LIGHTING);
+}
+
+void drawCoral()
+{
+	glEnable(GL_LIGHTING);
+
+	GLfloat ambient[] = { 0.05f, 0.7f, 0.1f, 1.0f };
+	GLfloat diffuse[] = { 0.0f, 1.0f, 0.1f, 1.0f };
+	GLfloat specular[] = { 0.5f, 0.5f, 0.5f, 1.0f };
+	GLfloat shininess = 50.0f;
+	
+	for (GLint i = 0; i < 14; i++)
+	{
+		glPushMatrix();
+		
+		// Move each coral to their random position
+		glTranslatef(coralPositions[i].position[0], coralPositions[i].position[1], 0);
+
+		// Scale each coral to 100 times its size
+		glScalef(200.0f, 200.0f, 200.0f);
+
+		// Rotate the coral so it lies on the proper axis
+		glRotatef(90.0f, 1, 0, 0);
+		glRotatef(-90.0f, 0, 1, 0);
+
+		// Set the material to the green color
+		setMaterial(ambient, diffuse, specular, shininess);
+
+		// Render each coral
+		renderObject(&coral[i]);
+
+		glPopMatrix();
+	}
+
 	glDisable(GL_LIGHTING);
 }
 
@@ -787,6 +855,8 @@ void display(void)
 	drawBottomDisc();
 	drawCylinderWall();
 
+	drawCoral();
+
 	drawWave();
 
 	drawUnitVectors();
@@ -838,6 +908,8 @@ void initializeGL(void)
 // the submarine in its own method
 void initSub()
 {
+	allocateObject(&submarine);
+
 	FILE* file = fopen("submarine - updated.obj", "r");
 	if (!file)
 	{
@@ -845,14 +917,49 @@ void initSub()
 		return 1;
 	}
 
-	allocateAndPopulateHelper(file, &submarineValues, submarine, &submarineGroupCount);
+	allocateAndPopulateHelper(file, &submarine);
 	fclose(file);
+
+	printf("Success allocating for submarine\n");
+}
+
+void initCoral()
+{
+	char* coralFilePaths[14] = { "coral/coral_1.obj", "coral/coral_2.obj", "coral/coral_3.obj" ,
+	"coral/coral_4.obj", "coral/coral_5.obj", "coral/coral_6.obj", "coral/coral_7.obj", 
+	"coral/coral_8.obj", "coral/coral_9.obj", "coral/coral_10.obj", "coral/coral_11.obj", 
+	"coral/coral_12.obj", "coral/coral_13.obj", "coral/coral_14.obj" };
+	for (GLint i = 0; i < 14; i++)
+	{
+		allocateObject(&coral[i]);
+
+		FILE* file = fopen(coralFilePaths[i], "r");
+		if (!file)
+		{
+			printf("No coral file found for index: %d\n", i);
+			return 1;
+		}
+
+		allocateAndPopulateHelper(file, &coral[i]);
+		fclose(file);
+		
+		printf("Success allocating for coral at %d\n", i);
+
+		// Set the coral positions to some random position
+		GLint x = (int)generateRandomFloat(-400, 400);
+		GLint y = (int)generateRandomFloat(-400, 400);
+
+		coralPositions[i].position[0] = x;
+		coralPositions[i].position[1] = y;
+		coralPositions[i].position[2] = 0;
+	}
 }
 
 // Method to initialize data and textures
 void init()
 {
 	initSub();
+	initCoral();
 
 	sandTexture = readPPM("spongebob-sand.ppm");
 	printf("Initialized sand texture with ID: %u\n", sandTexture);
@@ -861,12 +968,10 @@ void init()
 // Method to free the memory of all of the objects we allocated memory for
 void freeObjects()
 {
-	free(submarineValues.vertices);
-	free(submarineValues.normals);
-	for (GLint i = 0; i < submarineGroupCount; i++)
-	{
-		free(submarine[i].faces);
-	}
+	free(submarine.groups->faceCount);
+	free(submarine.groups->faces);
+	free(submarine.values.vertices);
+	free(submarine.values.normals);
 }
 
 // The main method that ties everything together
