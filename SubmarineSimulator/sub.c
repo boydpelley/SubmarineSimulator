@@ -44,6 +44,13 @@ typedef struct
 	Group groups[100];
 } Object;
 
+typedef struct
+{
+	GLfloat position[3];
+	GLfloat velocity[3];
+	GLfloat color[3];
+} Boid;
+
 // Beginning camera position
 GLfloat cameraPosition[] = { 0.0f, -200.0f, 0.0f };
 GLfloat cameraLookAt[] = { 0.0f, 0.0f, 0.0f };
@@ -95,6 +102,25 @@ GLfloat waveTimeValue = 0.0f;
 GLfloat waveAmplitude = 40.0f;
 GLfloat waveVelocity = 0.025f;
 GLfloat waveLength = 450.0f;
+
+// Fish Variables
+GLfloat fishPathRadius = 350.0f;
+GLfloat numberOfFishSquiggles = 20.0f;
+GLfloat fishSquiggleDepth = 20.0f;
+
+#define FLOCK_SIZE 20
+#define NUMBER_NEIGHBOURS 6
+Boid currentFlock[FLOCK_SIZE];
+Boid previousFlock[FLOCK_SIZE];
+GLfloat flockSpeed = 0.01;
+GLint distanceThreshold = 25;
+GLfloat boidDistance = 20;
+
+// boid factors
+GLfloat wallAvoidanceFactor = 0.00001;
+GLfloat boidAvoidanceFactor = 0.000007;
+GLfloat boidAlignmentFactor = 0.0000002;
+GLfloat boidCohesionFactor = 0.0000005;
 
 // Textures
 GLuint sandTexture;
@@ -681,6 +707,153 @@ void drawWave()
 	glDisable(GL_LIGHTING);
 }
 
+GLfloat getDistance(GLfloat a[3], GLfloat b[3])
+{
+	return sqrt((a[0] - b[0]) * (a[0] - b[0]) + (a[1] - b[1]) * (a[1] - b[1]) + (a[2] - b[2]) * (a[2] - b[2]));
+}
+
+/**
+* This method copies the current flock to the previous flock
+*/
+void copyCurrentFlockToPrevious()
+{
+	for (GLint i = 0; i < FLOCK_SIZE; i++)
+	{
+		previousFlock[i].position[0] = currentFlock[i].position[0];
+		previousFlock[i].position[1] = currentFlock[i].position[1];
+		previousFlock[i].position[2] = currentFlock[i].position[2];
+		previousFlock[i].velocity[0] = currentFlock[i].velocity[0];
+		previousFlock[i].velocity[1] = currentFlock[i].velocity[1];
+		previousFlock[i].velocity[2] = currentFlock[i].velocity[2];
+		previousFlock[i].color[0] = currentFlock[i].color[0];
+		previousFlock[i].color[1] = currentFlock[i].color[1];
+		previousFlock[i].color[2] = currentFlock[i].color[2];
+	}
+}
+
+/*
+* This method initializes the fish at random positions and velocities
+*/
+void initializeBoids()
+{
+	
+	for (GLint i = 0; i < FLOCK_SIZE; i++)
+	{
+		GLfloat angle = generateRandomFloat(0, 2 * PI);
+		GLfloat r = generateRandomFloat(0, bottomDiscRadius);
+
+		// Set the initial position of the fish 
+		currentFlock[i].position[0] = r * cos(angle);
+		currentFlock[i].position[1] = r * sin(angle);
+		currentFlock[i].position[2] = generateRandomFloat(0, wallHeight);
+
+		// Set the intial velocity
+		GLfloat speedAngle = generateRandomFloat(0, 2 * PI);
+		currentFlock[i].velocity[0] = flockSpeed * cos(speedAngle);
+		currentFlock[i].velocity[1] = flockSpeed * sin(speedAngle);
+		currentFlock[i].velocity[2] = generateRandomFloat(0, flockSpeed);
+
+		// Set boid color to blue
+		currentFlock[i].color[0] = 0.0;
+		currentFlock[i].color[1] = 0.0;
+		currentFlock[i].color[2] = 1.0;
+	}
+	// Copy this to the previous flock so when we do our very first calculation we aren't calculating 
+	// from null values
+	copyCurrentFlockToPrevious();
+}
+
+void avoidCylinderWalls(GLint index)
+{
+	GLfloat x = previousFlock[index].position[0];
+	GLfloat y = previousFlock[index].position[1];
+	GLfloat z = previousFlock[index].position[2];
+
+	GLfloat vx = previousFlock[index].velocity[0];
+	GLfloat vy = previousFlock[index].velocity[1];
+	GLfloat vz = previousFlock[index].velocity[2];
+
+	GLfloat distanceToOrigin = sqrt(x * x + y * y);
+
+	if (distanceToOrigin > bottomDiscRadius - distanceThreshold)
+	{
+		GLfloat newAngle = (1.0f / (distanceToOrigin - bottomDiscRadius)) * wallAvoidanceFactor;
+		vx -= x / distanceToOrigin * newAngle;
+		vy -= y / distanceToOrigin * newAngle;
+	}
+
+	if (z > wallHeight - distanceThreshold)
+	{
+		vz -= wallAvoidanceFactor / (z - wallHeight);
+	}
+	else if (z < distanceThreshold)
+	{
+		if (z == 0) z += 0.0001f;
+		z += wallAvoidanceFactor / 0 - z;
+	}
+
+	currentFlock[index].velocity[0] = vx;
+	currentFlock[index].velocity[1] = vy;
+	currentFlock[index].velocity[2] = vz;
+}
+
+void handleBoidRules(GLint i, GLint* nearestNeighbours)
+{
+	GLfloat alignment[3] = { 0, 0, 0 };
+	GLfloat cohesion[3] = { 0, 0, 0 };
+	GLfloat separation[3] = { 0, 0, 0 };
+
+	for (GLint j = 0; j < NUMBER_NEIGHBOURS; j++)
+	{
+		GLint neighbour = nearestNeighbours[j];
+
+		alignment[0] += previousFlock[neighbour].velocity[0];
+		alignment[1] += previousFlock[neighbour].velocity[1];
+		alignment[2] += previousFlock[neighbour].velocity[2];
+
+		alignment[0] += previousFlock[neighbour].position[0];
+		alignment[1] += previousFlock[neighbour].position[1];
+		alignment[2] += previousFlock[neighbour].position[2];
+		
+		GLfloat distance = getDistance(currentFlock[i].position, currentFlock[neighbour].position);
+		if (distance < boidDistance)
+		{
+			GLfloat directionAway[3] = 
+		}
+	}
+}
+
+void drawFish()
+{
+
+}
+
+/*
+* Function used to draw the path of the fish
+*/
+void drawBoidHorizontalPath()
+{
+	GLint segments = 360;
+	GLfloat increment = 2 * PI / segments;
+
+	glColor3f(1.0f, 1.0f, 1.0f);
+
+	glBegin(GL_LINE_STRIP);
+
+	for (GLfloat i = 0; i <= PI * 2; i += increment)
+	{
+		GLfloat r = fishPathRadius + fishSquiggleDepth * sin(numberOfFishSquiggles * i);
+
+		GLfloat x = r * cos(i);
+		GLfloat y = r * sin(i);
+
+		glVertex3f(x, y, 150);
+	}
+
+	glEnd();
+
+}
+
 /*
 * Method that is used to handle the mouse movement across the screen to rotate 
 * the camera. It uses global prevX and prevY variables so that it can keep 
@@ -859,6 +1032,8 @@ void display(void)
 
 	drawWave();
 
+	drawBoidHorizontalPath();
+
 	drawUnitVectors();
 
 	glutSwapBuffers();
@@ -910,7 +1085,7 @@ void initSub()
 {
 	allocateObject(&submarine);
 
-	FILE* file = fopen("submarine - updated.obj", "r");
+	FILE* file = fopen("sub_norm_flat.obj", "r");
 	if (!file)
 	{
 		printf("No file found\n");
