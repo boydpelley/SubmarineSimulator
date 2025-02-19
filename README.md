@@ -2,6 +2,10 @@
 
 This project was written in C with OpenGL and simulates a submarine in an underwater environment
 
+## Demo
+
+https://github.com/user-attachments/assets/68e123ba-5d17-4601-95c7-5c939c245f91
+
 ## Features
 
 - XYZ movement
