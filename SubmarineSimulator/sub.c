@@ -1,3 +1,22 @@
+/******************************************************************************
+* 
+* Final Project - CSCI 3161
+* Boyd Pelley - B00919714
+* 
+* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+*	This code represents a 3D environment where you control a submarine across 
+* an underwater scene. The code reads in object files to render the submarine
+* and other objects; it also reads PPM files to render textures. This program
+* also implements camera control, movement with keyboard keys, fullscreen, 
+* showing the difference between wireframe and full rendering, fog, and 
+* lighting.
+*	One of the largest features this program has is an implementation of fish
+* that mimic boids from the first assignment. The code has similarities to the
+* first assignment, other than the fact that I had implemented a third axis.
+* The boids mimic flocking behavior through three ideas of cohesion, alignment,
+* and proximity. It also has wall avoidance behavior
+******************************************************************************/
+
 #include <freeglut.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -108,22 +127,29 @@ GLfloat fishPathRadius = 350.0f;
 GLfloat numberOfFishSquiggles = 20.0f;
 GLfloat fishSquiggleDepth = 20.0f;
 
-#define FLOCK_SIZE 20
+#define FLOCK_SIZE 15
 #define NUMBER_NEIGHBOURS 6
 Boid currentFlock[FLOCK_SIZE];
 Boid previousFlock[FLOCK_SIZE];
-GLfloat flockSpeed = 0.01;
+GLfloat flockSpeed = 0.4;
+GLfloat maxSpeed = 0.4;
 GLint distanceThreshold = 25;
 GLfloat boidDistance = 20;
+GLfloat boidSize = 10;
 
 // boid factors
-GLfloat wallAvoidanceFactor = 0.00001;
-GLfloat boidAvoidanceFactor = 0.000007;
-GLfloat boidAlignmentFactor = 0.0000002;
-GLfloat boidCohesionFactor = 0.0000005;
+GLfloat wallAvoidanceFactor = 0.05;
+GLfloat boidAvoidanceFactor = 0.07;
+GLfloat boidAlignmentFactor = 0.0003;
+GLfloat boidCohesionFactor = 0.0003;
 
 // Textures
 GLuint sandTexture;
+
+GLfloat getDistance(GLfloat a[3], GLfloat b[3])
+{
+	return sqrtf((a[0] - b[0]) * (a[0] - b[0]) + (a[1] - b[1]) * (a[1] - b[1]) + (a[2] - b[2]) * (a[2] - b[2]));
+}
 
 /*
 * This method generates a random float between any two random number inclusively.
@@ -162,6 +188,20 @@ void normalizeVector(Vertex3* vector)
 	vector->position[0] /= length;
 	vector->position[1] /= length;
 	vector->position[2] /= length;
+}
+
+void normalizeVectorArray(GLfloat* vector)
+{
+	GLfloat length = sqrtf(vector[0] * vector[0] + vector[1] * vector[1] +
+		vector[2] * vector[2]);
+
+	if (length != 0)
+	{
+		vector[0] /= length;
+		vector[1] /= length;
+		vector[2] /= length;
+	}
+	
 }
 
 // Helper function to set the material of a surface
@@ -707,11 +747,6 @@ void drawWave()
 	glDisable(GL_LIGHTING);
 }
 
-GLfloat getDistance(GLfloat a[3], GLfloat b[3])
-{
-	return sqrt((a[0] - b[0]) * (a[0] - b[0]) + (a[1] - b[1]) * (a[1] - b[1]) + (a[2] - b[2]) * (a[2] - b[2]));
-}
-
 /**
 * This method copies the current flock to the previous flock
 */
@@ -739,13 +774,14 @@ void initializeBoids()
 	
 	for (GLint i = 0; i < FLOCK_SIZE; i++)
 	{
+		// Generate a random angle and radius
 		GLfloat angle = generateRandomFloat(0, 2 * PI);
-		GLfloat r = generateRandomFloat(0, bottomDiscRadius);
+		GLfloat r = generateRandomFloat(0, bottomDiscRadius - 100);
 
 		// Set the initial position of the fish 
 		currentFlock[i].position[0] = r * cos(angle);
 		currentFlock[i].position[1] = r * sin(angle);
-		currentFlock[i].position[2] = generateRandomFloat(0, wallHeight);
+		currentFlock[i].position[2] = generateRandomFloat(0, wallHeight - 100);
 
 		// Set the intial velocity
 		GLfloat speedAngle = generateRandomFloat(0, 2 * PI);
@@ -763,6 +799,93 @@ void initializeBoids()
 	copyCurrentFlockToPrevious();
 }
 
+// This struct is used to find the boids neighbours and nothing else
+typedef struct boidNeighbours
+{
+	GLfloat distance;
+	GLint index;
+} boidNeighbours;
+
+// The three methods below are standard implementations of quicksort except we pass structs rather
+// than some integer/float directly
+void swap(boidNeighbours* a, boidNeighbours* b)
+{
+	boidNeighbours temp = *a;
+	*a = *b;
+	*b = temp;
+}
+
+GLint partition(boidNeighbours arr[], GLint low, GLint high)
+{
+	GLfloat pivot = arr[high].distance;
+
+	GLint i = low - 1;
+
+	for (GLint j = low; j <= high; j++)
+	{
+		if (arr[j].distance < pivot)
+		{
+			i++;
+			swap(&arr[i], &arr[j]);
+		}
+	}
+
+	swap(&arr[i + 1], &arr[high]);
+	return i + 1;
+}
+
+void quicksort(boidNeighbours arr[], GLint low, GLint high)
+{
+	if (low < high)
+	{
+		GLint pi = partition(arr, low, high);
+		quicksort(arr, low, pi - 1);
+		quicksort(arr, pi + 1, high);
+	}
+}
+
+/**
+* Using quicksort, this function will find any boids NUMBER_NEIGHBOURS (6) neighbours. This
+* function accepts 3 parameters, the current Boid, the index of the boid, and the list of
+* the boid's nearest neighbours. It first fills the struct array of boidNeighbours, then sorts
+* them, copying over the indexes to the array we passed into the function.
+*/
+void findNearestNeighboursIndex(Boid boid, GLint index, GLint* nearestNeighboursIndexes)
+{
+	boidNeighbours neighbours[FLOCK_SIZE];
+
+	// Copy over every boid to the list, if the index equals the current boid, the distance is 
+	// set to some arbitrarily large value (the window width in our case), so the boid will not
+	// be the first index in the sorted list (it would be index 0 because the distance would be
+	// 0
+	for (GLint i = 0; i < FLOCK_SIZE; i++)
+	{
+		if (i != index)
+		{
+			neighbours[i].distance = getDistance(boid.position, currentFlock[i].position);
+			neighbours[i].index = i;
+		}
+		else
+		{
+			neighbours[i].distance = windowHeight;
+			neighbours[i].index = i;
+		}
+	}
+
+	quicksort(neighbours, 0, FLOCK_SIZE - 1);
+
+	// Copy the first x indexes to the list we passed into the function
+	for (GLint i = 0; i < NUMBER_NEIGHBOURS; i++)
+	{
+		nearestNeighboursIndexes[i] = neighbours[i].index;
+	}
+}
+
+/*
+* Method that steers the boids away from the wall It steers them away based
+* on how far from the origin they are, or if they are close to hittin the 
+* floor or ceiling.
+*/
 void avoidCylinderWalls(GLint index)
 {
 	GLfloat x = previousFlock[index].position[0];
@@ -773,23 +896,38 @@ void avoidCylinderWalls(GLint index)
 	GLfloat vy = previousFlock[index].velocity[1];
 	GLfloat vz = previousFlock[index].velocity[2];
 
+	// Distance to the center of the cylinder
 	GLfloat distanceToOrigin = sqrt(x * x + y * y);
 
+	// If we are outside of the range of the cylinder
 	if (distanceToOrigin > bottomDiscRadius - distanceThreshold)
 	{
-		GLfloat newAngle = (1.0f / (distanceToOrigin - bottomDiscRadius)) * wallAvoidanceFactor;
-		vx -= x / distanceToOrigin * newAngle;
-		vy -= y / distanceToOrigin * newAngle;
+		// So we aren't dividing by zero
+		if (distanceToOrigin != 0)
+		{
+			vx -= (x / (distanceToOrigin * (bottomDiscRadius - distanceToOrigin))) * wallAvoidanceFactor;
+			vy -= (y / (distanceToOrigin * (bottomDiscRadius - distanceToOrigin))) * wallAvoidanceFactor;
+		}
 	}
 
+	// Top wall hit
 	if (z > wallHeight - distanceThreshold)
 	{
-		vz -= wallAvoidanceFactor / (z - wallHeight);
+		vz += ((1.0f / (z - wallHeight)) * wallAvoidanceFactor);
 	}
+	// Bottom wall hit
 	else if (z < distanceThreshold)
 	{
-		if (z == 0) z += 0.0001f;
-		z += wallAvoidanceFactor / 0 - z;
+		vz += ((1.0f / z) * wallAvoidanceFactor);
+	}
+
+	// Make sure the speed doesn't get too high
+	GLfloat speed = sqrt(vx * vx + vy * vy + vz * vz);
+	if (speed > maxSpeed) 
+	{
+		vx = (vx / speed) * maxSpeed;
+		vy = (vy / speed) * maxSpeed;
+		vz = (vz / speed) * maxSpeed;
 	}
 
 	currentFlock[index].velocity[0] = vx;
@@ -797,12 +935,25 @@ void avoidCylinderWalls(GLint index)
 	currentFlock[index].velocity[2] = vz;
 }
 
+// Applies a boid factor to a certain array value (like alignment for example)
+void applyFactor(GLfloat * array, GLfloat factor)
+{
+	array[0] *= factor;
+	array[1] *= factor;
+	array[2] *= factor;
+}
+
+/*
+* Almost identical to the method used in Assignment 1, this method does the same
+* thing as A1 except in the 3rd dimension.
+*/
 void handleBoidRules(GLint i, GLint* nearestNeighbours)
 {
 	GLfloat alignment[3] = { 0, 0, 0 };
 	GLfloat cohesion[3] = { 0, 0, 0 };
 	GLfloat separation[3] = { 0, 0, 0 };
 
+	// Iterate through each nearest neighbour of a given boid
 	for (GLint j = 0; j < NUMBER_NEIGHBOURS; j++)
 	{
 		GLint neighbour = nearestNeighbours[j];
@@ -815,43 +966,192 @@ void handleBoidRules(GLint i, GLint* nearestNeighbours)
 		alignment[1] += previousFlock[neighbour].position[1];
 		alignment[2] += previousFlock[neighbour].position[2];
 		
+		// Find the distance of the curretn boid compared to the current neighbour
 		GLfloat distance = getDistance(currentFlock[i].position, currentFlock[neighbour].position);
 		if (distance < boidDistance)
 		{
-			GLfloat directionAway[3] = 
+			// Get the vectors of the distance away from the current boid
+			GLfloat directionAway[3] =
+			{
+				previousFlock[i].position[0] - previousFlock[neighbour].position[0],
+				previousFlock[i].position[1] - previousFlock[neighbour].position[1],
+				previousFlock[i].position[2] - previousFlock[neighbour].position[2]
+			};
+
+			normalizeVectorArray(directionAway);
+			
+			// Math for the boid separation
+			if (distance != 0)
+			{
+				directionAway[0] *= (1.0f / distance) * boidAvoidanceFactor;
+				directionAway[1] *= (1.0f / distance) * boidAvoidanceFactor;
+				directionAway[2] *= (1.0f / distance) * boidAvoidanceFactor;
+			}
+
+			separation[0] += directionAway[0];
+			separation[1] += directionAway[1];
+			separation[2] += directionAway[2];
 		}
+	}
+
+	// Take the average of the boid and its neighbours
+	alignment[0] /= NUMBER_NEIGHBOURS;
+	alignment[1] /= NUMBER_NEIGHBOURS;
+	alignment[2] /= NUMBER_NEIGHBOURS;
+
+	// Remove the current boids alignment
+	alignment[0] -= previousFlock[i].velocity[0];
+	alignment[1] -= previousFlock[i].velocity[1];
+	alignment[2] -= previousFlock[i].velocity[2];
+
+	normalizeVectorArray(alignment);
+	applyFactor(alignment, boidAlignmentFactor);
+
+	// Take the average cohesion
+	cohesion[0] /= NUMBER_NEIGHBOURS;
+	cohesion[1] /= NUMBER_NEIGHBOURS;
+	cohesion[2] /= NUMBER_NEIGHBOURS;
+
+	normalizeVectorArray(cohesion);
+	applyFactor(cohesion, boidCohesionFactor);
+
+	// Add the three values to the velocity
+	currentFlock[i].velocity[0] += alignment[0];
+	currentFlock[i].velocity[1] += alignment[1];
+	currentFlock[i].velocity[2] += alignment[2];
+
+	currentFlock[i].velocity[0] += cohesion[0];
+	currentFlock[i].velocity[1] += cohesion[1];
+	currentFlock[i].velocity[2] += cohesion[2];
+
+	currentFlock[i].velocity[0] += separation[0];
+	currentFlock[i].velocity[1] += separation[1];
+	currentFlock[i].velocity[2] += separation[2];
+
+	// Calculate the current speed anf make sure it's not too fast
+	GLfloat currentSpeed = sqrt(currentFlock[i].velocity[0] * currentFlock[i].velocity[0] +
+		currentFlock[i].velocity[1] * currentFlock[i].velocity[1] + currentFlock[i].velocity[2] * currentFlock[i].velocity[2]);
+
+	if (currentSpeed > flockSpeed)
+	{
+		currentFlock[i].velocity[0] = (currentFlock[i].velocity[0] / flockSpeed) * flockSpeed;
+		currentFlock[i].velocity[1] = (currentFlock[i].velocity[1] / flockSpeed) * flockSpeed;
+		currentFlock[i].velocity[2] = (currentFlock[i].velocity[2] / flockSpeed) * flockSpeed;
 	}
 }
 
-void drawFish()
+// A simplified version of the same method used in the first assignment
+void updateBoids()
 {
+	for (GLint i = 0; i < FLOCK_SIZE; i++)
+	{
+		GLint nearestNeighbours[NUMBER_NEIGHBOURS];
+		findNearestNeighboursIndex(currentFlock[i], i, nearestNeighbours);
 
+		avoidCylinderWalls(i);
+		handleBoidRules(i, nearestNeighbours);
+
+		currentFlock[i].position[0] += currentFlock[i].velocity[0];
+		currentFlock[i].position[1] += currentFlock[i].velocity[1];
+		currentFlock[i].position[2] += currentFlock[i].velocity[2];
+	}
 }
 
 /*
-* Function used to draw the path of the fish
+* This method draws the boids and sets the normals for each boid. It points the 
+* boids in the direction they are moving and sets their material to blue.
 */
-void drawBoidHorizontalPath()
+void drawBoids(Boid boid)
 {
-	GLint segments = 360;
-	GLfloat increment = 2 * PI / segments;
+	glEnable(GL_LIGHTING);
 
-	glColor3f(1.0f, 1.0f, 1.0f);
+	// Normalize the velocity vectors for the angle calculations
+	GLfloat magnitude = sqrt(boid.velocity[0] * boid.velocity[0] + 
+		boid.velocity[1] * boid.velocity[1] +
+		boid.velocity[2] * boid.velocity[2]);
 
-	glBegin(GL_LINE_STRIP);
-
-	for (GLfloat i = 0; i <= PI * 2; i += increment)
+	GLfloat velocity[3] = 
 	{
-		GLfloat r = fishPathRadius + fishSquiggleDepth * sin(numberOfFishSquiggles * i);
+		boid.velocity[0] / magnitude,
+		boid.velocity[1] / magnitude,
+		boid.velocity[2] / magnitude 
+	};
 
-		GLfloat x = r * cos(i);
-		GLfloat y = r * sin(i);
+	// For rotation
+	GLfloat angleZ = atan2f(velocity[0], velocity[2]);
+	GLfloat pitch = -asinf(velocity[1]);
 
-		glVertex3f(x, y, 150);
-	}
+	glPushMatrix();
+
+	glTranslatef(boid.position[0], boid.position[1], boid.position[2]);
+
+	glRotatef(angleZ * (180.0f / PI), 0.0f, 1.0f, 0.0f); 
+	glRotatef(pitch * (180.0f / PI), 1.0f, 0.0f, 0.0f);
+
+	GLfloat ambient[] = { 0.1f, 0.1f, 0.5f, 1.0f };
+	GLfloat diffuse[] = { 0.0f, 0.0f, 1.0f, 1.0f };
+	GLfloat specular[] = { 0.5f, 0.5f, 0.5f, 1.0f };
+	GLfloat shininess = 50.0f;
+
+	setMaterial(ambient, diffuse, specular, shininess);
+
+	// The 5 vertices that make up the boid
+	Vertex3 v1 = { 0.0f, 0.0f, boidSize * 1.75f };
+	Vertex3 v2 = { -boidSize, boidSize, -boidSize };
+	Vertex3 v3 = { boidSize, boidSize, -boidSize };
+	Vertex3 v4 = { boidSize, -boidSize, -boidSize };
+	Vertex3 v5 = { -boidSize, -boidSize, -boidSize };
+
+	glBegin(GL_TRIANGLES);
+
+	// First triangle
+	Vertex3 normal;
+	normal = calculateNormal(v1, v2, v3);
+	glNormal3f(normal.position[0], normal.position[1], normal.position[2]);
+	glVertex3f(v1.position[0], v1.position[1], v1.position[2]);
+	glVertex3f(v2.position[0], v2.position[1], v2.position[2]);
+	glVertex3f(v3.position[0], v3.position[1], v3.position[2]);
+
+	// Second triangle
+	normal = calculateNormal(v1, v3, v4);
+	glNormal3f(normal.position[0], normal.position[1], normal.position[2]);
+	glVertex3f(v1.position[0], v1.position[1], v1.position[2]);
+	glVertex3f(v3.position[0], v3.position[1], v3.position[2]);
+	glVertex3f(v4.position[0], v4.position[1], v4.position[2]);
+
+	// Third triangle
+	normal = calculateNormal(v1, v4, v5);
+	glNormal3f(normal.position[0], normal.position[1], normal.position[2]);
+	glVertex3f(v1.position[0], v1.position[1], v1.position[2]);
+	glVertex3f(v4.position[0], v4.position[1], v4.position[2]);
+	glVertex3f(v5.position[0], v5.position[1], v5.position[2]);
+
+	// Fourth triangle
+	normal = calculateNormal(v1, v5, v2);
+	glNormal3f(normal.position[0], normal.position[1], normal.position[2]);
+	glVertex3f(v1.position[0], v1.position[1], v1.position[2]);
+	glVertex3f(v5.position[0], v5.position[1], v5.position[2]);
+	glVertex3f(v2.position[0], v2.position[1], v2.position[2]);
+
+	// First base triangle
+	normal = calculateNormal(v2, v3, v4);
+	glNormal3f(normal.position[0], normal.position[1], normal.position[2]);
+	glVertex3f(v2.position[0], v2.position[1], v2.position[2]);
+	glVertex3f(v3.position[0], v3.position[1], v3.position[2]);
+	glVertex3f(v4.position[0], v4.position[1], v4.position[2]);
+
+	// Second base triangle
+	normal = calculateNormal(v4, v5, v2);
+	glNormal3f(normal.position[0], normal.position[1], normal.position[2]);
+	glVertex3f(v4.position[0], v4.position[1], v4.position[2]);
+	glVertex3f(v5.position[0], v5.position[1], v5.position[2]);
+	glVertex3f(v2.position[0], v2.position[1], v2.position[2]);
 
 	glEnd();
 
+	glPopMatrix();
+
+	glDisable(GL_LIGHTING);
 }
 
 /*
@@ -999,6 +1299,9 @@ void idleScene(void)
 {
 	handleMovement();
 
+	updateBoids();
+	copyCurrentFlockToPrevious();
+
 	waveTimeValue += waveVelocity;
 	if (waveTimeValue > 100000) waveTimeValue = 0;
 
@@ -1032,7 +1335,10 @@ void display(void)
 
 	drawWave();
 
-	drawBoidHorizontalPath();
+	for (GLint i = 0; i < FLOCK_SIZE; i++)
+	{
+		drawBoids(currentFlock[i]);
+	}
 
 	drawUnitVectors();
 
@@ -1135,6 +1441,7 @@ void init()
 {
 	initSub();
 	initCoral();
+	initializeBoids();
 
 	sandTexture = readPPM("spongebob-sand.ppm");
 	printf("Initialized sand texture with ID: %u\n", sandTexture);
@@ -1147,6 +1454,21 @@ void freeObjects()
 	free(submarine.groups->faces);
 	free(submarine.values.vertices);
 	free(submarine.values.normals);
+}
+
+void printDump()
+{
+	printf("\n\n");
+	printf("Scene Controls\n");
+	printf("-----------------\n");
+	printf("Up Arrow   : Raise Submarine\n");
+	printf("Down Arrow : Lower Submarine\n");
+	printf("w,a,s,d    : Lateral Movement of Submarine\n");
+	printf("u          : Toggle Wireframe Drawing\n");
+	printf("b          : Toggle Fog\n");
+	printf("f          : Fullscreen\n");
+	printf("q          : Quit\n");
+	printf("\nNote: This is run on Windows 64-bit\n\n");
 }
 
 // The main method that ties everything together
@@ -1170,6 +1492,8 @@ int main(int argc, char** argv)
 	glutPassiveMotionFunc(moveMouse);
 
 	init();
+
+	printDump();
 
 	glutIdleFunc(idleScene);
 
